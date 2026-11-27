@@ -1,6 +1,10 @@
 package com.puzzlequest.app.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -34,7 +38,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,8 +47,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -53,7 +58,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.puzzlequest.app.CrashStore
 import com.puzzlequest.app.R
 import com.puzzlequest.app.data.content.ContentBank
 import com.puzzlequest.app.data.db.AttemptEntity
@@ -82,6 +89,7 @@ import com.puzzlequest.app.ui.components.StatTile
 import com.puzzlequest.app.ui.components.WeeklyLineChart
 import com.puzzlequest.app.ui.theme.QuestBackdrop
 import com.puzzlequest.app.ui.theme.QuestColors
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
@@ -108,10 +116,10 @@ fun ParentScreen(
     val dataVersion by repository.dataVersion.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
+    val context = LocalContext.current
     var pinInput by remember { mutableStateOf("") }
     var wrongPin by remember { mutableStateOf(false) }
-    var wrongTries by remember { mutableIntStateOf(0) }
-    var lockedUntilMs by remember { mutableLongStateOf(0L) }
+    var lockedUntilMs by remember { mutableLongStateOf(repository.getPinLockedUntilMs()) }
 
     if (!unlocked) {
         val now = System.currentTimeMillis()
@@ -167,20 +175,19 @@ fun ParentScreen(
                 Spacer(Modifier.height(16.dp))
                 Button(
                     onClick = {
-                        if (System.currentTimeMillis() < lockedUntilMs) return@Button
+                        val currentMs = System.currentTimeMillis()
+                        if (currentMs < lockedUntilMs) return@Button
                         if (pinInput == repository.getParentPin()) {
+                            repository.clearPinFailures()
+                            lockedUntilMs = 0L
                             onUnlockStateChange(true)
                             pinInput = ""
                             wrongPin = false
-                            wrongTries = 0
                         } else {
-                            wrongTries += 1
                             wrongPin = true
                             pinInput = ""
-                            if (wrongTries >= 5) {
-                                lockedUntilMs = System.currentTimeMillis() + 60_000L
-                                wrongTries = 0
-                            }
+                            val until = repository.recordPinFailure(currentMs)
+                            if (until > 0L) lockedUntilMs = until
                         }
                     },
                     colors = ButtonDefaults.buttonColors(
@@ -218,14 +225,28 @@ fun ParentScreen(
     var showPinDialog by remember { mutableStateOf(false) }
     var showAddPlayerDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(activeStudent?.id, dataVersion) {
-        val id = activeStudent?.id ?: return@LaunchedEffect
-        attempts = repository.getAttempts(id)
-        notes = repository.getNotes(id)
-        dailyChallenges = repository.getDailyChallenges(id)
+    var today by remember { mutableStateOf(Dates.today()) }
+    var crashLog by remember { mutableStateOf(CrashStore.read(context)) }
+    var copiedCrash by remember { mutableStateOf(false) }
+
+    LifecycleResumeEffect(Unit) {
+        today = Dates.today()
+        crashLog = CrashStore.read(context)
+        onPauseOrDispose { }
     }
 
-    val today = remember { Dates.today() }
+    LaunchedEffect(activeStudent?.id, dataVersion) {
+        val id = activeStudent?.id ?: return@LaunchedEffect
+        try {
+            attempts = repository.getAttempts(id)
+            notes = repository.getNotes(id)
+            dailyChallenges = repository.getDailyChallenges(id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.e("PuzzleQuest", "Failed to load parent dashboard data", e)
+        }
+    }
     val attemptRecords = remember(attempts) {
         attempts.map {
             AttemptRecord(
@@ -284,6 +305,56 @@ fun ParentScreen(
             }
 
             AppUpdateCard()
+
+            crashLog?.let { logText ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(QuestColors.BgMid)
+                        .border(1.5.dp, QuestColors.Danger.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = "Last crash report (stored only on this device)",
+                        color = QuestColors.Danger,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                    )
+                    Text(
+                        text = logText.lines().take(12).joinToString("\n"),
+                        color = QuestColors.CreamDim,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                runCatching {
+                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    cm.setPrimaryClip(ClipData.newPlainText("Puzzle Quest crash log", logText))
+                                    copiedCrash = true
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = QuestColors.Gold, contentColor = QuestColors.Ink),
+                            shape = RoundedCornerShape(10.dp),
+                        ) {
+                            Text(if (copiedCrash) "Copied" else "Copy crash log", fontWeight = FontWeight.Bold)
+                        }
+                        TextButton(
+                            onClick = {
+                                CrashStore.clear(context)
+                                crashLog = null
+                                copiedCrash = false
+                            },
+                        ) {
+                            Text("Clear", color = QuestColors.CreamDim)
+                        }
+                    }
+                }
+            }
 
             // Action chips
             FlowRow(
@@ -652,7 +723,15 @@ fun ParentScreen(
                                         val clean = noteBody.trim()
                                         if (clean.isNotEmpty()) {
                                             noteBody = ""
-                                            scope.launch { repository.addNote(activeStudent.id, clean) }
+                                            scope.launch {
+                                                try {
+                                                    repository.addNote(activeStudent.id, clean)
+                                                } catch (e: CancellationException) {
+                                                    throw e
+                                                } catch (e: Exception) {
+                                                    android.util.Log.e("PuzzleQuest", "Failed to add note", e)
+                                                }
+                                            }
                                         }
                                     },
                                     colors = ButtonDefaults.buttonColors(
@@ -694,7 +773,17 @@ fun ParentScreen(
                                                 fontSize = 12.sp,
                                             )
                                             TextButton(
-                                                onClick = { scope.launch { repository.deleteNote(n.id) } },
+                                                onClick = {
+                                                    scope.launch {
+                                                        try {
+                                                            repository.deleteNote(n.id)
+                                                        } catch (e: CancellationException) {
+                                                            throw e
+                                                        } catch (e: Exception) {
+                                                            android.util.Log.e("PuzzleQuest", "Failed to delete note", e)
+                                                        }
+                                                    }
+                                                },
                                                 modifier = Modifier.testTag("delete_note_${n.id}"),
                                             ) {
                                                 Text(stringResource(R.string.delete_note), color = QuestColors.Danger)
@@ -785,8 +874,14 @@ fun ParentScreen(
                         val clean = playerName.trim()
                         if (clean.isNotEmpty()) {
                             scope.launch {
-                                val created = repository.addStudent(clean, selectedAvatar)
-                                selectedStudentId = created.id
+                                try {
+                                    val created = repository.addStudent(clean, selectedAvatar)
+                                    selectedStudentId = created.id
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    android.util.Log.e("PuzzleQuest", "Failed to add student", e)
+                                }
                             }
                             showAddPlayerDialog = false
                         }

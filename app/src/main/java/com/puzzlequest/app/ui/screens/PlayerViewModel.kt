@@ -23,14 +23,16 @@ import com.puzzlequest.app.engine.SpeechPart
 import com.puzzlequest.app.engine.TtsController
 import com.puzzlequest.app.engine.shouldSuggestBreak
 import com.puzzlequest.app.ui.components.ConfettiIntensity
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.CancellationException
 import java.util.UUID
 
 enum class PlayerPhase { LOADING, READY, LEARNING, ANSWERING, FEEDBACK, DONE }
@@ -97,6 +99,11 @@ class PlayerViewModel(
     private val contentBank: ContentBank,
     private val repository: LearnerRepository,
     private val tts: TtsController,
+    private val backgroundScope: CoroutineScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e ->
+            android.util.Log.e("PuzzleQuest", "Background task failed", e)
+        },
+    ),
 ) : ViewModel() {
 
     companion object {
@@ -108,6 +115,7 @@ class PlayerViewModel(
 
     private val _uiState = MutableStateFlow(PlayerUiState(voiceOn = repository.voiceOn.value))
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
+    val ttsReady: StateFlow<Boolean> = tts.ready
 
     private var reasons: Map<String, String> = emptyMap()
     private var seenIds: Set<String> = emptySet()
@@ -129,96 +137,103 @@ class PlayerViewModel(
 
     private fun loadSession() {
         viewModelScope.launch {
-            val students = repository.students.value.ifEmpty {
-                repository.refreshStudents()
-                repository.students.value
-            }
-            val student = students.firstOrNull { it.id == studentId } ?: students.firstOrNull()
-            val history = if (student != null) repository.getAttempts(student.id) else emptyList()
-            val pastChallenges = if (student != null) repository.getDailyChallenges(student.id) else emptyList()
-            val today = Dates.today()
-            val progressSummary = DailyChallengeEngine.computeProgressSummary(history, pastChallenges, today)
-            val attemptRecords = history.map {
-                AttemptRecord(
-                    questionId = it.questionId,
-                    isCorrect = it.isCorrect,
-                    answeredAtMs = it.answeredAtMs,
-                    localDate = it.localDate,
-                )
-            }
-            seenIds = history.map { it.questionId }.toSet()
+            try {
+                val students = repository.students.value.ifEmpty {
+                    repository.refreshStudents()
+                    repository.students.value
+                }
+                val student = students.firstOrNull { it.id == studentId } ?: students.firstOrNull()
+                val history = if (student != null) repository.getAttempts(student.id) else emptyList()
+                val pastChallenges = if (student != null) repository.getDailyChallenges(student.id) else emptyList()
+                val today = Dates.today()
+                val progressSummary = DailyChallengeEngine.computeProgressSummary(history, pastChallenges, today)
+                val attemptRecords = history.map {
+                    AttemptRecord(
+                        questionId = it.questionId,
+                        isCorrect = it.isCorrect,
+                        answeredAtMs = it.answeredAtMs,
+                        localDate = it.localDate,
+                    )
+                }
+                seenIds = history.map { it.questionId }.toSet()
 
-            if (isDailyChallenge && student != null) {
-                val dailyPlan = DailyChallengeEngine.selectDailyChallenge(
-                    studentId = student.id,
+                if (isDailyChallenge && student != null) {
+                    val dailyPlan = DailyChallengeEngine.selectDailyChallenge(
+                        studentId = student.id,
+                        questions = contentBank.reviewedQuestions,
+                        skills = contentBank.skills,
+                        attempts = attemptRecords,
+                        pastChallenges = pastChallenges,
+                        today = today,
+                    )
+                    reasons = if (dailyPlan != null) {
+                        mapOf(dailyPlan.question.id to "Daily challenge (${dailyPlan.adjustmentSummary})")
+                    } else {
+                        emptyMap()
+                    }
+                    _uiState.update {
+                        it.copy(
+                            student = student,
+                            questions = listOfNotNull(dailyPlan?.question),
+                            phase = PlayerPhase.READY,
+                            voiceOn = repository.voiceOn.value,
+                            isDailyChallenge = true,
+                            dailyChallengePlan = dailyPlan,
+                            dailyBonusAwarded = null,
+                            totalProgressPoints = progressSummary.totalPoints,
+                            dailyStreak = progressSummary.dailyStreak,
+                        )
+                    }
+                    return@launch
+                }
+
+                val chosenTheme = themeId?.let { id -> contentBank.themes.firstOrNull { it.id == id } }
+                val categorySkills: Set<String>? = when {
+                    chosenTheme != null -> chosenTheme.skills.toSet()
+                    categoryKey != null && categoryKey.startsWith("domain:") -> {
+                        val domain = categoryKey.removePrefix("domain:")
+                        contentBank.skills.filter { it.domain == domain }.map { it.code }.toSet()
+                    }
+                    categoryKey != null && categoryKey.startsWith("strand:") -> {
+                        val strand = categoryKey.removePrefix("strand:")
+                        contentBank.skills.filter { it.strand == strand }.map { it.code }.toSet()
+                    }
+                    categoryKey != null && categoryKey.startsWith("skill:") -> {
+                        setOf(categoryKey.removePrefix("skill:"))
+                    }
+                    else -> null
+                }
+                val plan = SessionSelector.selectSession(
                     questions = contentBank.reviewedQuestions,
                     skills = contentBank.skills,
                     attempts = attemptRecords,
-                    pastChallenges = pastChallenges,
                     today = today,
+                    options = SessionOptions(
+                        themeSkills = contentBank.themes.flatMap { it.skills }.toSet(),
+                        onlySkills = categorySkills?.takeIf { it.isNotEmpty() },
+                        pureCategory = chosenTheme == null && categorySkills != null,
+                    ),
                 )
-                reasons = if (dailyPlan != null) {
-                    mapOf(dailyPlan.question.id to "Daily challenge (${dailyPlan.adjustmentSummary})")
-                } else {
-                    emptyMap()
-                }
+                reasons = plan.picks.associate { it.questionId to it.reason }
+                val pickedQuestions = plan.picks.mapNotNull { contentBank.questionsById[it.questionId] }
+
                 _uiState.update {
                     it.copy(
                         student = student,
-                        questions = listOfNotNull(dailyPlan?.question),
+                        questions = pickedQuestions,
                         phase = PlayerPhase.READY,
                         voiceOn = repository.voiceOn.value,
-                        isDailyChallenge = true,
-                        dailyChallengePlan = dailyPlan,
-                        dailyBonusAwarded = null,
+                        isDailyChallenge = false,
+                        dailyChallengePlan = null,
                         totalProgressPoints = progressSummary.totalPoints,
                         dailyStreak = progressSummary.dailyStreak,
                     )
                 }
-                return@launch
-            }
-
-            val chosenTheme = themeId?.let { id -> contentBank.themes.firstOrNull { it.id == id } }
-            val categorySkills: Set<String>? = when {
-                chosenTheme != null -> chosenTheme.skills.toSet()
-                categoryKey != null && categoryKey.startsWith("domain:") -> {
-                    val domain = categoryKey.removePrefix("domain:")
-                    contentBank.skills.filter { it.domain == domain }.map { it.code }.toSet()
-                }
-                categoryKey != null && categoryKey.startsWith("strand:") -> {
-                    val strand = categoryKey.removePrefix("strand:")
-                    contentBank.skills.filter { it.strand == strand }.map { it.code }.toSet()
-                }
-                categoryKey != null && categoryKey.startsWith("skill:") -> {
-                    setOf(categoryKey.removePrefix("skill:"))
-                }
-                else -> null
-            }
-            val plan = SessionSelector.selectSession(
-                questions = contentBank.reviewedQuestions,
-                skills = contentBank.skills,
-                attempts = attemptRecords,
-                today = today,
-                options = SessionOptions(
-                    themeSkills = contentBank.themes.flatMap { it.skills }.toSet(),
-                    onlySkills = categorySkills?.takeIf { it.isNotEmpty() },
-                    pureCategory = chosenTheme == null && categorySkills != null,
-                ),
-            )
-            reasons = plan.picks.associate { it.questionId to it.reason }
-            val pickedQuestions = plan.picks.mapNotNull { contentBank.questionsById[it.questionId] }
-
-            _uiState.update {
-                it.copy(
-                    student = student,
-                    questions = pickedQuestions,
-                    phase = PlayerPhase.READY,
-                    voiceOn = repository.voiceOn.value,
-                    isDailyChallenge = false,
-                    dailyChallengePlan = null,
-                    totalProgressPoints = progressSummary.totalPoints,
-                    dailyStreak = progressSummary.dailyStreak,
-                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("PuzzleQuest", "Failed to load session", e)
+                _uiState.update { it.copy(phase = PlayerPhase.READY, questions = emptyList()) }
             }
         }
     }
@@ -558,10 +573,12 @@ class PlayerViewModel(
         val endMs = System.currentTimeMillis()
         val id = sessionId
         val startedAt = sessionStartedAtMs
-        CoroutineScope(Dispatchers.IO).launch {
+        backgroundScope.launch {
             try {
                 repository.endSession(id, st.id, startedAt, endMs)
-            } catch (e: android.database.SQLException) {
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
                 android.util.Log.e("PuzzleQuest", "Could not close practice session", e)
             }
         }

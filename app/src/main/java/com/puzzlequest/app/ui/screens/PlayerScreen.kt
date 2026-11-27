@@ -87,6 +87,7 @@ fun PlayerScreen(
     onLeave: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val ttsReady by viewModel.ttsReady.collectAsStateWithLifecycle()
     val context = LocalContext.current
     BackHandler(enabled = state.saving) { }
     val haptic = LocalHapticFeedback.current
@@ -99,58 +100,78 @@ fun PlayerScreen(
     }
 
     val recognizerAvailable = remember(context) {
-        SpeechRecognizer.isRecognitionAvailable(context)
+        runCatching { SpeechRecognizer.isRecognitionAvailable(context) }.getOrDefault(false)
     }
     var speechRecognizer by remember { mutableStateOf<SpeechRecognizer?>(null) }
+    var speechSessionToken by remember { mutableStateOf(0) }
+
+    fun stopSpeechCapture() {
+        speechSessionToken += 1
+        isListening = false
+        runCatching { speechRecognizer?.stopListening() }
+        runCatching { speechRecognizer?.cancel() }
+    }
 
     DisposableEffect(Unit) {
         onDispose {
-            speechRecognizer?.destroy()
+            runCatching { speechRecognizer?.destroy() }
             speechRecognizer = null
         }
     }
 
+    LaunchedEffect(state.index, state.phase) {
+        if (isListening) stopSpeechCapture()
+    }
+
     fun startSpeechCapture(languageCode: String) {
         if (!recognizerAvailable) return
-        speechRecognizer?.destroy()
-        val recognizer = SpeechRecognizer.createSpeechRecognizer(context)
-        speechRecognizer = recognizer
-        recognizer.setRecognitionListener(
-            object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) {
-                    isListening = true
-                }
-                override fun onBeginningOfSpeech() = Unit
-                override fun onRmsChanged(rmsdB: Float) = Unit
-                override fun onBufferReceived(buffer: ByteArray?) = Unit
-                override fun onEndOfSpeech() {
-                    isListening = false
-                }
-                override fun onError(error: Int) {
-                    isListening = false
-                    viewModel.onSpokenAlternatives(emptyList())
-                }
-                override fun onResults(results: Bundle?) {
-                    isListening = false
-                    val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
-                    viewModel.onSpokenAlternatives(matches)
-                }
-                override fun onPartialResults(partialResults: Bundle?) = Unit
-                override fun onEvent(eventType: Int, params: Bundle?) = Unit
-            },
-        )
-        val langTag = when (languageCode) {
-            "es" -> "es-ES"
-            "fr" -> "fr-FR"
-            else -> "en-US"
+        val token = ++speechSessionToken
+        runCatching {
+            speechRecognizer?.destroy()
+            val recognizer = SpeechRecognizer.createSpeechRecognizer(context)
+            speechRecognizer = recognizer
+            recognizer.setRecognitionListener(
+                object : RecognitionListener {
+                    override fun onReadyForSpeech(params: Bundle?) {
+                        if (token == speechSessionToken) isListening = true
+                    }
+                    override fun onBeginningOfSpeech() = Unit
+                    override fun onRmsChanged(rmsdB: Float) = Unit
+                    override fun onBufferReceived(buffer: ByteArray?) = Unit
+                    override fun onEndOfSpeech() {
+                        if (token == speechSessionToken) isListening = false
+                    }
+                    override fun onError(error: Int) {
+                        if (token != speechSessionToken) return
+                        isListening = false
+                        viewModel.onSpokenAlternatives(emptyList())
+                    }
+                    override fun onResults(results: Bundle?) {
+                        if (token != speechSessionToken) return
+                        isListening = false
+                        val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
+                        viewModel.onSpokenAlternatives(matches)
+                    }
+                    override fun onPartialResults(partialResults: Bundle?) = Unit
+                    override fun onEvent(eventType: Int, params: Bundle?) = Unit
+                },
+            )
+            val langTag = when (languageCode) {
+                "es" -> "es-ES"
+                "fr" -> "fr-FR"
+                else -> "en-US"
+            }
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, langTag)
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
+            }
+            isListening = true
+            recognizer.startListening(intent)
+        }.onFailure {
+            isListening = false
+            viewModel.onSpokenAlternatives(emptyList())
         }
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, langTag)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
-        }
-        isListening = true
-        recognizer.startListening(intent)
     }
 
     var pendingSpeechLang by remember { mutableStateOf("en") }
@@ -162,8 +183,7 @@ fun PlayerScreen(
 
     fun requestVoiceAnswer(lang: String) {
         if (isListening) {
-            speechRecognizer?.stopListening()
-            isListening = false
+            stopSpeechCapture()
             return
         }
         pendingSpeechLang = lang
@@ -172,7 +192,7 @@ fun PlayerScreen(
         if (granted) {
             startSpeechCapture(lang)
         } else {
-            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            runCatching { audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }
         }
     }
 
@@ -257,6 +277,11 @@ fun PlayerScreen(
 
             // Main phase body
             val scrollState = rememberScrollState()
+            LaunchedEffect(state.index, state.phase) {
+                if (state.phase == PlayerPhase.LEARNING || state.phase == PlayerPhase.ANSWERING) {
+                    scrollState.scrollTo(0)
+                }
+            }
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -326,7 +351,7 @@ fun PlayerScreen(
                                 )
                                 Text(
                                     text = if (plan.isCompletedToday) {
-                                        "You already earned today's bonus — play again for practice!"
+                                        "You already earned today's bonus. Play again for practice!"
                                     } else {
                                         "Complete today's hand-picked puzzle to earn +${plan.bonusPoints} bonus progress points."
                                     },
@@ -509,33 +534,37 @@ fun PlayerScreen(
 
                     PlayerPhase.ANSWERING, PlayerPhase.FEEDBACK -> {
                         val question = state.currentQuestion ?: return@Column
-                        if (state.saving) {
-                            Text("Saving your answer…", color = QuestColors.Cream)
-                        } else {
-                            if (state.saveError) Text("Your answer could not be saved. Tap Check answer to retry.", color = QuestColors.Cream)
-                            QuestionContent(
-                                question = question,
-                                state = state,
-                                isListening = isListening,
-                                recognizerAvailable = recognizerAvailable,
-                                onReadAloud = { viewModel.readQuestionAloud() },
-                                onHearForeign = { viewModel.hearForeignPrompt() },
-                                onToggleScratchpad = { viewModel.toggleScratchpad() },
-                                onTogglePaper = { viewModel.toggleUsingPaper() },
-                                onScratchStrokesChanged = { viewModel.updateScratchStrokes(it) },
-                                onRevealHint = { viewModel.revealHint() },
-                                onVoiceAnswer = { requestVoiceAnswer(question.language) },
-                                onSelectChoice = { viewModel.selectChoice(it) },
-                                onDigitKey = { viewModel.onDigitKey(it) },
-                                onPlaceOrder = { viewModel.placeOrderItem(it) },
-                                onRemoveOrder = { viewModel.removeOrderAt(it) },
-                                onClearOrder = { viewModel.clearOrder() },
-                                onSubmit = { viewModel.submitAnswer() },
-                                onRevealExplanation = { viewModel.revealExplanation() },
-                                onNext = { viewModel.nextQuestion() },
-                                onTakeBreak = { viewModel.finishSession() },
+                        if (state.saveError) {
+                            Text(
+                                text = "Your answer could not be saved. Tap Check answer to retry.",
+                                color = QuestColors.Danger,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(bottom = 8.dp),
                             )
                         }
+                        QuestionContent(
+                            question = question,
+                            state = state,
+                            ttsReady = ttsReady,
+                            isListening = isListening,
+                            recognizerAvailable = recognizerAvailable,
+                            onReadAloud = { viewModel.readQuestionAloud() },
+                            onHearForeign = { viewModel.hearForeignPrompt() },
+                            onToggleScratchpad = { viewModel.toggleScratchpad() },
+                            onTogglePaper = { viewModel.toggleUsingPaper() },
+                            onScratchStrokesChanged = { viewModel.updateScratchStrokes(it) },
+                            onRevealHint = { viewModel.revealHint() },
+                            onVoiceAnswer = { requestVoiceAnswer(question.language) },
+                            onSelectChoice = { viewModel.selectChoice(it) },
+                            onDigitKey = { viewModel.onDigitKey(it) },
+                            onPlaceOrder = { viewModel.placeOrderItem(it) },
+                            onRemoveOrder = { viewModel.removeOrderAt(it) },
+                            onClearOrder = { viewModel.clearOrder() },
+                            onSubmit = { viewModel.submitAnswer() },
+                            onRevealExplanation = { viewModel.revealExplanation() },
+                            onNext = { viewModel.nextQuestion() },
+                            onTakeBreak = { viewModel.finishSession() },
+                        )
                     }
                 }
             }
@@ -559,6 +588,7 @@ fun PlayerScreen(
 private fun QuestionContent(
     question: Question,
     state: PlayerUiState,
+    ttsReady: Boolean,
     isListening: Boolean,
     recognizerAvailable: Boolean,
     onReadAloud: () -> Unit,
@@ -683,17 +713,31 @@ private fun QuestionContent(
             )
         }
 
-        question.listen?.let {
-            Button(
-                onClick = onHearForeign,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = QuestColors.Ink,
-                    contentColor = QuestColors.Cream,
-                ),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.testTag("hear_it_button"),
-            ) {
-                Text("🔊 ${stringResource(R.string.hear_it)}", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+        question.listen?.let { listen ->
+            if (ttsReady) {
+                Button(
+                    onClick = onHearForeign,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = QuestColors.Ink,
+                        contentColor = QuestColors.Cream,
+                    ),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.testTag("hear_it_button"),
+                ) {
+                    Text("🔊 ${stringResource(R.string.hear_it)}", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                }
+            } else {
+                Text(
+                    text = "Word to read: \"${listen.text}\"",
+                    color = QuestColors.Ink,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(QuestColors.PaperSoft)
+                        .border(1.5.dp, QuestColors.Ink.copy(alpha = 0.2f), RoundedCornerShape(14.dp))
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                )
             }
         }
 
@@ -967,9 +1011,10 @@ private fun QuestionContent(
     if (state.phase == PlayerPhase.ANSWERING && state.currentResponse != null) {
         Spacer(Modifier.height(18.dp))
         BigQuestButton(
-            text = "${stringResource(R.string.check_answer)} ✓",
+            text = if (state.saving) "Saving..." else "${stringResource(R.string.check_answer)} ✓",
             background = QuestColors.Gold,
             contentColor = QuestColors.Ink,
+            enabled = !state.saving,
             onClick = onSubmit,
             modifier = Modifier
                 .fillMaxWidth()
@@ -1211,9 +1256,11 @@ private fun BigQuestButton(
     contentColor: Color,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     Button(
         onClick = onClick,
+        enabled = enabled,
         colors = ButtonDefaults.buttonColors(containerColor = background, contentColor = contentColor),
         shape = RoundedCornerShape(18.dp),
         modifier = modifier.heightIn(min = 62.dp),

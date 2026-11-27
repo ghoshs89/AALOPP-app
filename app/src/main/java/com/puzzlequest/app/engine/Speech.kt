@@ -4,6 +4,9 @@ import android.content.Context
 import android.speech.tts.TextToSpeech
 import com.puzzlequest.app.data.model.Answer
 import com.puzzlequest.app.data.model.Question
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.text.Normalizer
 import java.util.Locale
 
@@ -109,15 +112,22 @@ object SpeechFormatter {
 
 class TtsController(context: Context) {
     private var tts: TextToSpeech? = null
+    private val _ready = MutableStateFlow(false)
+    val ready: StateFlow<Boolean> = _ready.asStateFlow()
+
     @Volatile
     var isReady: Boolean = false
         private set
 
     init {
-        tts = TextToSpeech(context.applicationContext) { status ->
-            isReady = status == TextToSpeech.SUCCESS
-            if (isReady) {
-                tts?.setSpeechRate(0.95f)
+        runCatching {
+            tts = TextToSpeech(context.applicationContext) { status ->
+                val ok = status == TextToSpeech.SUCCESS
+                isReady = ok
+                _ready.value = ok
+                if (ok) {
+                    runCatching { tts?.setSpeechRate(0.95f) }
+                }
             }
         }
     }
@@ -129,24 +139,29 @@ class TtsController(context: Context) {
     fun speakParts(parts: List<SpeechPart>) {
         val engine = tts ?: return
         if (!isReady || parts.isEmpty()) return
-        engine.stop()
-        parts.forEachIndexed { index, part ->
-            if (part.text.isBlank()) return@forEachIndexed
-            val locale = Locale.forLanguageTag(part.lang)
-            engine.language = locale
-            val mode = if (index == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
-            engine.speak(part.text, mode, null, "pq_${System.nanoTime()}_$index")
+        runCatching {
+            engine.stop()
+            parts.forEachIndexed { index, part ->
+                if (part.text.isBlank()) return@forEachIndexed
+                val locale = Locale.forLanguageTag(part.lang)
+                engine.language = locale
+                val mode = if (index == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+                engine.speak(part.text, mode, null, "pq_${System.nanoTime()}_$index")
+            }
         }
     }
 
     fun stop() {
-        tts?.stop()
+        runCatching { tts?.stop() }
     }
 
     fun shutdown() {
-        tts?.stop()
-        tts?.shutdown()
+        runCatching {
+            tts?.stop()
+            tts?.shutdown()
+        }
         tts = null
         isReady = false
+        _ready.value = false
     }
 }

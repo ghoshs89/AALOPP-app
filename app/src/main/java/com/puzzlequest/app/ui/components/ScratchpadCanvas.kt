@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
@@ -156,7 +157,7 @@ fun ScratchpadCanvas(
                     .semantics { contentDescription = "Scratchpad for working it out" }
                     .pointerInput(activeInk) {
                         awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                             if (down.type == PointerType.Stylus) penSeen = true
                             if (down.type == PointerType.Touch && penSeen) return@awaitEachGesture
                             down.consume()
@@ -169,7 +170,7 @@ fun ScratchpadCanvas(
                             activePoints.add(down.position)
 
                             while (true) {
-                                val event = awaitPointerEvent()
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
                                 val change = event.changes.firstOrNull { it.id == down.id } ?: break
                                 if (change.pressed) {
                                     change.consume()

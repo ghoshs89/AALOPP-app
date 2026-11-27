@@ -1,32 +1,35 @@
 package com.puzzlequest.app
 
-import android.graphics.Color as AndroidColor
 import android.app.Application
+import android.graphics.Color as AndroidColor
 import android.os.Bundle
 import android.os.SystemClock
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.lifecycle.AndroidViewModel
-import androidx.lifecycle.compose.LifecycleResumeEffect
-import kotlinx.coroutines.delay
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -43,6 +46,17 @@ import com.puzzlequest.app.ui.screens.ReportScreen
 import com.puzzlequest.app.ui.theme.PuzzleQuestTheme
 import com.puzzlequest.app.ui.theme.QuestBackdrop
 import com.puzzlequest.app.ui.theme.QuestColors
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -80,40 +94,112 @@ class MainActivity : ComponentActivity() {
 class AppServices(application: Application) : AndroidViewModel(application) {
     val repository = LearnerRepository(application)
     val tts = TtsController(application)
+    val backgroundScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e ->
+            Log.e("PuzzleQuest", "Background task failed", e)
+        },
+    )
+
+    private val _contentBank = MutableStateFlow<ContentBank?>(null)
+    val contentBank: StateFlow<ContentBank?> = _contentBank.asStateFlow()
+
+    private val _loadError = MutableStateFlow(false)
+    val loadError: StateFlow<Boolean> = _loadError.asStateFlow()
+
+    private val _activeStudentId = MutableStateFlow<String?>(null)
+    val activeStudentId: StateFlow<String?> = _activeStudentId.asStateFlow()
+
+    private val _parentDeadline = MutableStateFlow(0L)
+    val parentDeadline: StateFlow<Long> = _parentDeadline.asStateFlow()
+
+    init {
+        loadAppData()
+    }
+
+    fun loadAppData() {
+        viewModelScope.launch {
+            _loadError.value = false
+            try {
+                repository.refreshStudents()
+                if (_contentBank.value == null) {
+                    _contentBank.value = ContentBank.load(getApplication())
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("PuzzleQuest", "Failed to load app data", e)
+                _loadError.value = true
+            }
+        }
+    }
+
+    fun selectStudent(studentId: String) {
+        _activeStudentId.value = studentId
+    }
+
+    fun setParentUnlocked(unlocked: Boolean) {
+        _parentDeadline.value = if (unlocked) SystemClock.elapsedRealtime() + 30 * 60_000L else 0L
+    }
+
+    fun expireParentIfNeeded() {
+        if (_parentDeadline.value <= SystemClock.elapsedRealtime()) {
+            _parentDeadline.value = 0L
+        }
+    }
+
     override fun onCleared() {
         tts.shutdown()
+        backgroundScope.cancel()
     }
 }
 
 @Composable
 private fun PuzzleQuestApp() {
-    val context = LocalContext.current
     val services: AppServices = viewModel()
     val repository = services.repository
     val tts = services.tts
-    var contentBank by remember { mutableStateOf<ContentBank?>(null) }
-    var parentDeadline by remember { mutableLongStateOf(0L) }
+    val contentBank by services.contentBank.collectAsStateWithLifecycle()
+    val loadError by services.loadError.collectAsStateWithLifecycle()
+    val parentDeadline by services.parentDeadline.collectAsStateWithLifecycle()
     val parentUnlocked = parentDeadline > SystemClock.elapsedRealtime()
+
     LaunchedEffect(parentDeadline) {
         if (parentDeadline > 0L) {
             delay((parentDeadline - SystemClock.elapsedRealtime()).coerceAtLeast(0))
-            parentDeadline = 0L
+            services.setParentUnlocked(false)
         }
     }
     LifecycleResumeEffect(Unit) {
-        if (parentDeadline <= SystemClock.elapsedRealtime()) parentDeadline = 0L
+        services.expireParentIfNeeded()
         onPauseOrDispose { }
     }
 
-    LaunchedEffect(Unit) {
-        repository.refreshStudents()
-        contentBank = ContentBank.load(context)
-    }
-
     val students by repository.students.collectAsStateWithLifecycle()
-    var activeStudentId by remember { mutableStateOf<String?>(null) }
+    val activeStudentId by services.activeStudentId.collectAsStateWithLifecycle()
     val activeStudent = students.firstOrNull { it.id == activeStudentId } ?: students.firstOrNull()
     val navController = rememberNavController()
+
+    if (loadError && contentBank == null) {
+        QuestBackdrop {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+            ) {
+                Text(
+                    text = "Could not load puzzles. Tap below to try again.",
+                    color = QuestColors.Cream,
+                    textAlign = TextAlign.Center,
+                )
+                Button(onClick = { services.loadAppData() }) {
+                    Text("Retry")
+                }
+            }
+        }
+        return
+    }
 
     NavHost(
         navController = navController,
@@ -131,23 +217,31 @@ private fun PuzzleQuestApp() {
                     contentBank = bank,
                     repository = repository,
                     onSelectStudent = { selectedId ->
-                        activeStudentId = selectedId
+                        services.selectStudent(selectedId)
                     },
                     onOpenParent = {
-                        parentDeadline = 0L
-                        navController.navigate(ParentRoute)
+                        services.setParentUnlocked(false)
+                        navController.navigate(ParentRoute) { launchSingleTop = true }
                     },
                     onStartDailyChallenge = {
-                        navController.navigate(PlayRoute(studentId = student.id, isDailyChallenge = true))
+                        navController.navigate(PlayRoute(studentId = student.id, isDailyChallenge = true)) {
+                            launchSingleTop = true
+                        }
                     },
                     onStartDaily = {
-                        navController.navigate(PlayRoute(studentId = student.id))
+                        navController.navigate(PlayRoute(studentId = student.id)) {
+                            launchSingleTop = true
+                        }
                     },
                     onStartTheme = { themeId ->
-                        navController.navigate(PlayRoute(studentId = student.id, themeId = themeId))
+                        navController.navigate(PlayRoute(studentId = student.id, themeId = themeId)) {
+                            launchSingleTop = true
+                        }
                     },
                     onStartCategory = { categoryKey ->
-                        navController.navigate(PlayRoute(studentId = student.id, categoryKey = categoryKey))
+                        navController.navigate(PlayRoute(studentId = student.id, categoryKey = categoryKey)) {
+                            launchSingleTop = true
+                        }
                     },
                 )
             }
@@ -178,6 +272,7 @@ private fun PuzzleQuestApp() {
                                 contentBank = bank,
                                 repository = repository,
                                 tts = tts,
+                                backgroundScope = services.backgroundScope,
                             ) as T
                         }
                     },
@@ -201,13 +296,13 @@ private fun PuzzleQuestApp() {
                     repository = repository,
                     unlocked = parentUnlocked,
                     onUnlockStateChange = { unlocked ->
-                        parentDeadline = if (unlocked) SystemClock.elapsedRealtime() + 30 * 60_000L else 0L
+                        services.setParentUnlocked(unlocked)
                     },
                     onOpenReport = { studentId ->
-                        navController.navigate(ReportRoute(studentId))
+                        navController.navigate(ReportRoute(studentId)) { launchSingleTop = true }
                     },
                     onBack = {
-                        parentDeadline = 0L
+                        services.setParentUnlocked(false)
                         navController.popBackStack(HomeRoute, inclusive = false)
                     },
                 )

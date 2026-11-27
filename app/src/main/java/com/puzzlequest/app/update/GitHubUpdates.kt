@@ -1,7 +1,10 @@
 package com.puzzlequest.app.update
 
 import android.content.Context
+import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
+import android.content.pm.Signature
+import android.os.Build
 import androidx.core.content.pm.PackageInfoCompat
 import com.puzzlequest.app.BuildConfig
 import java.io.File
@@ -55,6 +58,22 @@ suspend fun checkForUpdate(): Update? = withContext(Dispatchers.IO) {
 }
 
 @Suppress("DEPRECATION")
+private fun signingCertificates(info: PackageInfo): List<Signature> {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        val signingInfo = info.signingInfo
+        if (signingInfo != null) {
+            val certs = if (signingInfo.hasMultipleSigners()) {
+                signingInfo.apkContentsSigners
+            } else {
+                signingInfo.signingCertificateHistory
+            }
+            if (!certs.isNullOrEmpty()) return certs.toList()
+        }
+    }
+    return info.signatures?.toList().orEmpty()
+}
+
+@Suppress("DEPRECATION")
 private fun verify(context: Context, file: File, update: Update) {
     require(file.length() == update.size)
     val digest = MessageDigest.getInstance("SHA-256")
@@ -68,13 +87,19 @@ private fun verify(context: Context, file: File, update: Update) {
     }
     require(digest.digest().joinToString("") { "%02x".format(it) } == update.sha256)
     val pm = context.packageManager
-    val archive = requireNotNull(pm.getPackageArchiveInfo(file.path, PackageManager.GET_SIGNATURES))
-    val installed = pm.getPackageInfo(context.packageName, PackageManager.GET_SIGNATURES)
+    val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        PackageManager.GET_SIGNING_CERTIFICATES
+    } else {
+        PackageManager.GET_SIGNATURES
+    }
+    val archive = requireNotNull(pm.getPackageArchiveInfo(file.path, flags))
+    val installed = pm.getPackageInfo(context.packageName, flags)
     require(archive.packageName == context.packageName &&
         PackageInfoCompat.getLongVersionCode(archive) == update.code.toLong() &&
         update.code > PackageInfoCompat.getLongVersionCode(installed))
-    require(archive.signatures?.singleOrNull() != null &&
-        archive.signatures!!.single() == installed.signatures?.singleOrNull())
+    val archiveCert = signingCertificates(archive).singleOrNull()
+    val installedCert = signingCertificates(installed).singleOrNull()
+    require(archiveCert != null && archiveCert == installedCert)
 }
 
 suspend fun downloadUpdate(context: Context, update: Update): File = withContext(Dispatchers.IO) {
@@ -98,7 +123,11 @@ suspend fun downloadUpdate(context: Context, update: Update): File = withContext
             }
         }
         verify(context, tmp, update)
-        check(tmp.renameTo(apk))
+        if (apk.exists()) apk.delete()
+        if (!tmp.renameTo(apk)) {
+            tmp.copyTo(apk, overwrite = true)
+            verify(context, apk, update)
+        }
         apk
     } finally {
         conn.disconnect()

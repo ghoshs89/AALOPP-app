@@ -41,6 +41,9 @@ jobs:
             printf '%s' "$KEY" | base64 -d > "$RUNNER_TEMP/publisher.p12"
             echo "PUZZLE_KEYSTORE=$RUNNER_TEMP/publisher.p12" >> "$GITHUB_ENV"
           fi
+      - name: Run unit tests
+        if: inputs.signed_blob == ''
+        run: gradle :app:testReleaseUnitTest
       - name: Build release
         if: inputs.signed_blob == ''
         env:

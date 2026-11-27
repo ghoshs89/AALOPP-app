@@ -62,7 +62,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.CancellationException
 import com.puzzlequest.app.R
 import com.puzzlequest.app.data.content.ContentBank
 import com.puzzlequest.app.data.db.StudentRecord
@@ -120,7 +122,11 @@ fun ChooseThemeScreen(
     var selectedFilter by rememberSaveable { mutableStateOf(PuzzleCategoryFilter.ALL) }
     var showPlayerMenu by remember { mutableStateOf(false) }
     val dataVersion by repository.dataVersion.collectAsStateWithLifecycle()
-    val today = remember { Dates.today() }
+    var today by remember { mutableStateOf(Dates.today()) }
+    LifecycleResumeEffect(Unit) {
+        today = Dates.today()
+        onPauseOrDispose { }
+    }
     var dailyChallengePlan by remember { mutableStateOf<DailyChallengePlan?>(null) }
     var progressSummary by remember {
         mutableStateOf(
@@ -134,26 +140,32 @@ fun ChooseThemeScreen(
         )
     }
 
-    LaunchedEffect(student.id, dataVersion, contentBank) {
-        val attempts = repository.getAttempts(student.id)
-        val pastChallenges = repository.getDailyChallenges(student.id)
-        progressSummary = DailyChallengeEngine.computeProgressSummary(attempts, pastChallenges, today)
-        val attemptRecords = attempts.map {
-            AttemptRecord(
-                questionId = it.questionId,
-                isCorrect = it.isCorrect,
-                answeredAtMs = it.answeredAtMs,
-                localDate = it.localDate,
+    LaunchedEffect(student.id, dataVersion, contentBank, today) {
+        try {
+            val attempts = repository.getAttempts(student.id)
+            val pastChallenges = repository.getDailyChallenges(student.id)
+            progressSummary = DailyChallengeEngine.computeProgressSummary(attempts, pastChallenges, today)
+            val attemptRecords = attempts.map {
+                AttemptRecord(
+                    questionId = it.questionId,
+                    isCorrect = it.isCorrect,
+                    answeredAtMs = it.answeredAtMs,
+                    localDate = it.localDate,
+                )
+            }
+            dailyChallengePlan = DailyChallengeEngine.selectDailyChallenge(
+                studentId = student.id,
+                questions = contentBank.reviewedQuestions,
+                skills = contentBank.skills,
+                attempts = attemptRecords,
+                pastChallenges = pastChallenges,
+                today = today,
             )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.e("PuzzleQuest", "Failed to load home summary", e)
         }
-        dailyChallengePlan = DailyChallengeEngine.selectDailyChallenge(
-            studentId = student.id,
-            questions = contentBank.reviewedQuestions,
-            skills = contentBank.skills,
-            attempts = attemptRecords,
-            pastChallenges = pastChallenges,
-            today = today,
-        )
     }
 
     val reviewed = contentBank.reviewedQuestions

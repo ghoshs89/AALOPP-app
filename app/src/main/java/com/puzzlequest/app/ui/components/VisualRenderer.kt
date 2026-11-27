@@ -1,8 +1,11 @@
 package com.puzzlequest.app.ui.components
 
+import android.graphics.Bitmap
+import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Paint
 import android.graphics.Typeface
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -30,11 +33,13 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -80,7 +85,7 @@ fun VisualView(
         is Visual.Grid -> GridVisualView(visual.rows, visual.highlight, modifier)
         is Visual.Clock -> ClockVisualView(visual.hour, visual.minute, modifier)
         is Visual.BarChart -> BarChartVisualView(visual.title, visual.unit, visual.bars, modifier)
-        is Visual.Svg -> InlineSvgVisualView(visual.svg, visual.alt, modifier)
+        is Visual.Svg -> InlineSvgVisualView(visual.svg, visual.alt, compact, modifier)
         is Visual.Image -> ImageVisualView(visual, compact, modifier)
         is Visual.Coins -> CoinsVisualView(visual, modifier)
         is Visual.Ruler -> RulerVisualView(visual, modifier)
@@ -317,11 +322,12 @@ private fun BarChartVisualView(
                     .height(220.dp)
                     .semantics { contentDescription = "Bar graph: $title" },
             ) {
+                if (size.width <= 0f || size.height <= 0f) return@Canvas
                 val left = 44.dp.toPx()
-                val right = size.width - 12.dp.toPx()
+                val right = (size.width - 12.dp.toPx()).coerceAtLeast(left + 1f)
                 val plotTop = 12.dp.toPx()
                 val bottom = 36.dp.toPx()
-                val plotHeight = size.height - plotTop - bottom
+                val plotHeight = (size.height - plotTop - bottom).coerceAtLeast(1f)
                 val slot = (right - left) / bars.size.coerceAtLeast(1)
 
                 fun yFor(v: Int): Float = plotTop + plotHeight - (v.toFloat() / top) * plotHeight
@@ -395,38 +401,113 @@ private fun BarChartVisualView(
 }
 
 @Composable
-private fun InlineSvgVisualView(svgString: String, alt: String, modifier: Modifier) {
-    val parsedSvg = remember(svgString) {
-        runCatching { SVG.getFromString(svgString) }.getOrNull()
-    }
-    VisualCard(modifier) {
-        if (parsedSvg == null) {
-            Text(text = alt, color = QuestColors.Ink, fontSize = 15.sp, textAlign = TextAlign.Center)
-        } else {
-            val vb = parsedSvg.documentViewBox
-            val aspect = if (vb != null && vb.width() > 0f && vb.height() > 0f) {
+private fun InlineSvgVisualView(
+    svgString: String,
+    alt: String,
+    compact: Boolean,
+    modifier: Modifier,
+) {
+    val density = LocalDensity.current
+    val aspect = remember(svgString) {
+        runCatching {
+            val svg = SVG.getFromString(svgString)
+            val vb = svg.documentViewBox
+            if (vb != null && vb.width() > 0f && vb.height() > 0f) {
                 (vb.width() / vb.height()).coerceIn(0.6f, 3.6f)
             } else {
-                val w = parsedSvg.documentWidth
-                val h = parsedSvg.documentHeight
+                val w = svg.documentWidth
+                val h = svg.documentHeight
                 if (w > 0f && h > 0f) (w / h).coerceIn(0.6f, 3.6f) else 1.8f
             }
-            Canvas(
+        }.getOrNull()
+    }
+
+    if (compact) {
+        val wPx = with(density) { 104.dp.roundToPx().coerceIn(32, 512) }
+        val hPx = with(density) { 80.dp.roundToPx().coerceIn(32, 512) }
+        val bitmap = remember(svgString, wPx, hPx) {
+            renderSvgToBitmap(svgString, wPx, hPx)
+        }
+        Box(
+            modifier = modifier
+                .size(width = 116.dp, height = 92.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color.White)
+                .border(1.dp, QuestColors.Ink.copy(alpha = 0.12f), RoundedCornerShape(14.dp))
+                .padding(6.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap,
+                    contentDescription = alt,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Text(text = alt, color = QuestColors.Ink, fontSize = 13.sp, textAlign = TextAlign.Center)
+            }
+        }
+        return
+    }
+
+    VisualCard(modifier) {
+        if (aspect == null) {
+            Text(text = alt, color = QuestColors.Ink, fontSize = 15.sp, textAlign = TextAlign.Center)
+        } else {
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
                     .widthIn(max = 380.dp)
-                    .aspectRatio(aspect)
-                    .semantics { contentDescription = alt },
+                    .aspectRatio(aspect),
+                contentAlignment = Alignment.Center,
             ) {
-                parsedSvg.setDocumentWidth(size.width)
-                parsedSvg.setDocumentHeight(size.height)
-                drawIntoCanvas { canvas ->
-                    parsedSvg.renderToCanvas(canvas.nativeCanvas)
+                val wPx = with(density) { maxWidth.roundToPx().coerceIn(64, 1024) }
+                val hPx = (wPx / aspect).toInt().coerceIn(64, 1024)
+                val bitmap = remember(svgString, wPx, hPx) {
+                    renderSvgToBitmap(svgString, wPx, hPx)
+                }
+                if (bitmap != null) {
+                    Image(
+                        bitmap = bitmap,
+                        contentDescription = alt,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Text(text = alt, color = QuestColors.Ink, fontSize = 15.sp, textAlign = TextAlign.Center)
                 }
             }
         }
     }
 }
+
+private fun renderSvgToBitmap(svgString: String, widthPx: Int, heightPx: Int) = runCatching {
+    val svg = SVG.getFromString(svgString)
+    val vb = svg.documentViewBox
+    val srcW = when {
+        vb != null && vb.width() > 0f -> vb.width()
+        svg.documentWidth > 0f -> svg.documentWidth
+        else -> widthPx.toFloat()
+    }
+    val srcH = when {
+        vb != null && vb.height() > 0f -> vb.height()
+        svg.documentHeight > 0f -> svg.documentHeight
+        else -> heightPx.toFloat()
+    }
+    if (vb == null && srcW > 0f && srcH > 0f) {
+        svg.setDocumentViewBox(0f, 0f, srcW, srcH)
+    }
+    val scale = minOf(widthPx / srcW, heightPx / srcH).coerceAtLeast(0.01f)
+    val outW = (srcW * scale).toInt().coerceIn(1, widthPx)
+    val outH = (srcH * scale).toInt().coerceIn(1, heightPx)
+    svg.setDocumentWidth(outW.toFloat())
+    svg.setDocumentHeight(outH.toFloat())
+    val bitmap = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
+    val canvas = AndroidCanvas(bitmap)
+    svg.renderToCanvas(canvas)
+    bitmap.asImageBitmap()
+}.getOrNull()
 
 @Composable
 private fun ImageVisualView(
@@ -463,18 +544,22 @@ private fun AssetPictureTile(
     compact: Boolean,
 ) {
     val context = LocalContext.current
-    val request = remember(context, src) {
+    val density = LocalDensity.current
+    val tileW = if (compact) 116.dp else 148.dp
+    val tileH = if (compact) 82.dp else 108.dp
+    val decodeW = with(density) { tileW.roundToPx().coerceIn(64, 512) }
+    val decodeH = with(density) { tileH.roundToPx().coerceIn(64, 512) }
+    val request = remember(context, src, decodeW, decodeH) {
         ImageRequest.Builder(context)
             .data("file:///android_asset/${src.trimStart('/')}")
+            .size(decodeW, decodeH)
+            .allowHardware(false)
             .crossfade(false)
             .build()
     }
     Box(
         modifier = Modifier
-            .size(
-                width = if (compact) 116.dp else 148.dp,
-                height = if (compact) 82.dp else 108.dp,
-            )
+            .size(width = tileW, height = tileH)
             .clip(RoundedCornerShape(14.dp))
             .background(Color.White)
             .border(1.dp, QuestColors.Ink.copy(alpha = 0.12f), RoundedCornerShape(14.dp))

@@ -208,11 +208,12 @@ object DailyChallengeEngine {
                 .thenBy { it.first.id },
         )
 
+        if (scored.isEmpty()) return null
         // Select deterministically among top-tier hand-picked candidates for this calendar day.
         val bestQuality = scored.first().second
         val topTier = scored.filter { it.second >= bestQuality - 2 }.map { it.first }
-        val dailyHash = abs((epochDay * 1_103_515_245L + studentId.hashCode() * 31L + featuredStrand.hashCode()).toInt())
-        val pickedQuestion = topTier[dailyHash % topTier.size]
+        val rawHash = (epochDay * 1_103_515_245L + studentId.hashCode() * 31L + featuredStrand.hashCode()).toInt()
+        val pickedQuestion = topTier[Math.floorMod(rawHash, topTier.size)]
 
         val resolvedBand = pickedQuestion.difficulty.band
         val resolvedSummary = if (resolvedBand != adjustmentInfo.targetBand) {

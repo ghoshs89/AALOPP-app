@@ -74,13 +74,13 @@ class LearnerRepository(context: Context) {
 
     suspend fun addNote(studentId: String, body: String): ParentNoteRecord {
         val note = withContext(Dispatchers.IO) { db.insertNote(studentId, body) }
-        _dataVersion.value += 1
+        _dataVersion.update { it + 1 }
         return note
     }
 
     suspend fun deleteNote(noteId: String) {
         withContext(Dispatchers.IO) { db.deleteNote(noteId) }
-        _dataVersion.value += 1
+        _dataVersion.update { it + 1 }
     }
 
     suspend fun getDailyChallenges(studentId: String): List<DailyChallengeRecord> = withContext(Dispatchers.IO) {
@@ -101,10 +101,30 @@ class LearnerRepository(context: Context) {
         }
     }
 
+    fun getPinLockedUntilMs(): Long = prefs.getLong(KEY_PIN_LOCKED_UNTIL, 0L)
+
+    fun recordPinFailure(nowMs: Long = System.currentTimeMillis()): Long {
+        val tries = prefs.getInt(KEY_PIN_TRIES, 0) + 1
+        return if (tries >= 5) {
+            val until = nowMs + 5 * 60_000L
+            prefs.edit().putInt(KEY_PIN_TRIES, 0).putLong(KEY_PIN_LOCKED_UNTIL, until).apply()
+            until
+        } else {
+            prefs.edit().putInt(KEY_PIN_TRIES, tries).apply()
+            0L
+        }
+    }
+
+    fun clearPinFailures() {
+        prefs.edit().remove(KEY_PIN_TRIES).remove(KEY_PIN_LOCKED_UNTIL).apply()
+    }
+
     companion object {
         private const val PREFS_NAME = "puzzle_quest_prefs"
         private const val KEY_VOICE_ON = "voice_on"
         private const val KEY_PARENT_PIN = "parent_pin"
+        private const val KEY_PIN_TRIES = "pin_tries"
+        private const val KEY_PIN_LOCKED_UNTIL = "pin_locked_until_ms"
         const val DEFAULT_PIN = "1234"
     }
 }

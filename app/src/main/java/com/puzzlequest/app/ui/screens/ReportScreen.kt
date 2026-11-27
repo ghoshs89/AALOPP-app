@@ -40,7 +40,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.CancellationException
 import com.puzzlequest.app.R
 import com.puzzlequest.app.data.content.ContentBank
 import com.puzzlequest.app.data.db.AttemptEntity
@@ -76,13 +78,24 @@ fun ReportScreen(
     var attempts by remember { mutableStateOf<List<AttemptEntity>>(emptyList()) }
     var notes by remember { mutableStateOf<List<ParentNoteRecord>>(emptyList()) }
 
-    LaunchedEffect(student?.id) {
-        val id = student?.id ?: return@LaunchedEffect
-        attempts = repository.getAttempts(id)
-        notes = repository.getNotes(id).take(20)
+    var today by remember { mutableStateOf(Dates.today()) }
+    LifecycleResumeEffect(Unit) {
+        today = Dates.today()
+        onPauseOrDispose { }
     }
 
-    val today = remember { Dates.today() }
+    LaunchedEffect(student?.id) {
+        val id = student?.id ?: return@LaunchedEffect
+        try {
+            attempts = repository.getAttempts(id)
+            notes = repository.getNotes(id).take(20)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            attempts = emptyList()
+            notes = emptyList()
+        }
+    }
     val attemptRecords = remember(attempts) {
         attempts.map { AttemptRecord(it.questionId, it.isCorrect, it.answeredAtMs, it.localDate) }
     }
@@ -171,7 +184,9 @@ fun ReportScreen(
                             putExtra(Intent.EXTRA_SUBJECT, "Puzzle Quest Progress Report: ${student?.name ?: "Learner"}")
                             putExtra(Intent.EXTRA_TEXT, shareText)
                         }
-                        context.startActivity(Intent.createChooser(intent, "Share progress report"))
+                        runCatching {
+                            context.startActivity(Intent.createChooser(intent, "Share progress report"))
+                        }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = QuestColors.VizSeries, contentColor = QuestColors.PaperSoft),
                     shape = RoundedCornerShape(10.dp),

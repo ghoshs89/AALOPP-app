@@ -163,9 +163,10 @@ fun RulerVisualView(visual: Visual.Ruler, modifier: Modifier = Modifier) {
                     }
                 },
         ) {
-            val left = 18.dp.toPx()
-            val right = size.width - 18.dp.toPx()
-            val usableW = right - left
+                if (size.width <= 0f || size.height <= 0f) return@Canvas
+                val left = 18.dp.toPx()
+                val right = (size.width - 18.dp.toPx()).coerceAtLeast(left + 1f)
+                val usableW = (right - left).coerceAtLeast(1f)
             val perUnit = usableW / visual.length.coerceAtLeast(1)
             fun xFor(n: Float): Float = left + n * perUnit
 
@@ -285,11 +286,14 @@ fun RulerVisualView(visual: Visual.Ruler, modifier: Modifier = Modifier) {
 
 @Composable
 fun NumberLineVisualView(visual: Visual.NumberLine, modifier: Modifier = Modifier) {
+    val safeStep = visual.step.coerceAtLeast(1)
     val ticks = buildList {
         var v = visual.min
-        while (v <= visual.max) {
+        var guard = 0
+        while (v <= visual.max && guard < 200) {
             add(v)
-            v += visual.step
+            v += safeStep
+            guard++
         }
     }
     VisualCard(modifier) {
@@ -301,8 +305,9 @@ fun NumberLineVisualView(visual: Visual.NumberLine, modifier: Modifier = Modifie
                     contentDescription = "Number line from ${visual.min} to ${visual.max} with a marker at ${visual.mark}"
                 },
         ) {
+            if (size.width <= 0f || size.height <= 0f) return@Canvas
             val left = 24.dp.toPx()
-            val right = size.width - 24.dp.toPx()
+            val right = (size.width - 24.dp.toPx()).coerceAtLeast(left + 1f)
             val span = (visual.max - visual.min).coerceAtLeast(1).toFloat()
             fun xFor(v: Double): Float = left + (((v - visual.min) / span).toFloat()) * (right - left)
             val lineY = size.height * 0.60f
@@ -356,7 +361,9 @@ fun NumberLineVisualView(visual: Visual.NumberLine, modifier: Modifier = Modifie
             val markerColor = Color(0xFFD84957)
             val pillW = 68.dp.toPx()
             val pillH = 28.dp.toPx()
-            val pillX = (mx - pillW / 2f).coerceIn(6.dp.toPx(), size.width - pillW - 6.dp.toPx())
+            val pillPad = 6.dp.toPx()
+            val maxPillX = (size.width - pillW - pillPad).coerceAtLeast(pillPad)
+            val pillX = (mx - pillW / 2f).coerceIn(pillPad, maxPillX)
             val pillY = 8.dp.toPx()
 
             drawLine(markerColor, Offset(mx, pillY + pillH), Offset(mx, lineY - 7.dp.toPx()), strokeWidth = 2.5.dp.toPx())
@@ -410,10 +417,11 @@ fun FractionStripVisualView(visual: Visual.FractionStrip, modifier: Modifier = M
                 .height(totalHeight)
                 .semantics { contentDescription = "Fraction strips comparing equal parts of the same whole" },
         ) {
+            if (size.width <= 0f || size.height <= 0f) return@Canvas
             val hasLabels = visual.strips.any { !it.label.isNullOrBlank() }
             val labelSpace = if (hasLabels) 56.dp.toPx() else 0f
             val left = 8.dp.toPx()
-            val barW = size.width - left * 2 - labelSpace
+            val barW = (size.width - left * 2 - labelSpace).coerceAtLeast(1f)
             val barH = barHeightDp.toPx()
             val gap = gapDp.toPx()
 

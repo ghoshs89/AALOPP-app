@@ -49,7 +49,13 @@ fun ImportPracticeHistory(student: StudentRecord, repository: LearnerRepository)
     }
     Button(
         enabled = !busy,
-        onClick = { picker.launch(arrayOf("application/json", "application/octet-stream", "text/plain")) },
+        onClick = {
+            runCatching {
+                picker.launch(arrayOf("application/json", "application/octet-stream", "text/plain"))
+            }.onFailure {
+                message = "No file picker is available on this device."
+            }
+        },
     ) {
         Text(if (busy) "Working…" else "Import practice history")
     }
