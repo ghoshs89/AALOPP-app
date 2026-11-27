@@ -1,0 +1,8 @@
+{
+  "name": "Puzzle Quest",
+  "description": "Adaptive learning and cognitive reasoning practice app with interactive math, logic, language, and world puzzles plus a grown-ups progress dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
