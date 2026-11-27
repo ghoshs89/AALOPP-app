@@ -533,38 +533,42 @@ fun PlayerScreen(
                     }
 
                     PlayerPhase.ANSWERING, PlayerPhase.FEEDBACK -> {
-                        val question = state.currentQuestion ?: return@Column
-                        if (state.saveError) {
-                            Text(
-                                text = "Your answer could not be saved. Tap Check answer to retry.",
-                                color = QuestColors.Danger,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(bottom = 8.dp),
-                            )
+                        val question = state.currentQuestion
+                        if (question != null) {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                if (state.saveError) {
+                                    Text(
+                                        text = "Your answer could not be saved. Tap Check answer to retry.",
+                                        color = QuestColors.Danger,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(bottom = 8.dp),
+                                    )
+                                }
+                                QuestionContent(
+                                    question = question,
+                                    state = state,
+                                    ttsReady = ttsReady,
+                                    isListening = isListening,
+                                    recognizerAvailable = recognizerAvailable,
+                                    onReadAloud = { viewModel.readQuestionAloud() },
+                                    onHearForeign = { viewModel.hearForeignPrompt() },
+                                    onToggleScratchpad = { viewModel.toggleScratchpad() },
+                                    onTogglePaper = { viewModel.toggleUsingPaper() },
+                                    onScratchStrokesChanged = { viewModel.updateScratchStrokes(it) },
+                                    onRevealHint = { viewModel.revealHint() },
+                                    onVoiceAnswer = { requestVoiceAnswer(question.language) },
+                                    onSelectChoice = { viewModel.selectChoice(it) },
+                                    onDigitKey = { viewModel.onDigitKey(it) },
+                                    onPlaceOrder = { viewModel.placeOrderItem(it) },
+                                    onRemoveOrder = { viewModel.removeOrderAt(it) },
+                                    onClearOrder = { viewModel.clearOrder() },
+                                    onSubmit = { viewModel.submitAnswer() },
+                                    onRevealExplanation = { viewModel.revealExplanation() },
+                                    onNext = { viewModel.nextQuestion() },
+                                    onTakeBreak = { viewModel.finishSession() },
+                                )
+                            }
                         }
-                        QuestionContent(
-                            question = question,
-                            state = state,
-                            ttsReady = ttsReady,
-                            isListening = isListening,
-                            recognizerAvailable = recognizerAvailable,
-                            onReadAloud = { viewModel.readQuestionAloud() },
-                            onHearForeign = { viewModel.hearForeignPrompt() },
-                            onToggleScratchpad = { viewModel.toggleScratchpad() },
-                            onTogglePaper = { viewModel.toggleUsingPaper() },
-                            onScratchStrokesChanged = { viewModel.updateScratchStrokes(it) },
-                            onRevealHint = { viewModel.revealHint() },
-                            onVoiceAnswer = { requestVoiceAnswer(question.language) },
-                            onSelectChoice = { viewModel.selectChoice(it) },
-                            onDigitKey = { viewModel.onDigitKey(it) },
-                            onPlaceOrder = { viewModel.placeOrderItem(it) },
-                            onRemoveOrder = { viewModel.removeOrderAt(it) },
-                            onClearOrder = { viewModel.clearOrder() },
-                            onSubmit = { viewModel.submitAnswer() },
-                            onRevealExplanation = { viewModel.revealExplanation() },
-                            onNext = { viewModel.nextQuestion() },
-                            onTakeBreak = { viewModel.finishSession() },
-                        )
                     }
                 }
             }
@@ -612,8 +616,9 @@ private fun QuestionContent(
     val answer = question.answer
 
     // Keep scratch strokes alive across hide/reopen for the same question
-    val strokes = key(question.id) { remember { mutableStateListOf<ScratchStroke>() } }
+    val strokes = remember(question.id) { mutableStateListOf<ScratchStroke>() }
 
+    Column(modifier = Modifier.fillMaxWidth()) {
     val dailyPlan = state.dailyChallengePlan
     if (state.isDailyChallenge && dailyPlan != null) {
         val plan = dailyPlan
@@ -753,33 +758,41 @@ private fun QuestionContent(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        ToolChip(
-            label = "✏️ ${if (state.scratchOpen) stringResource(R.string.hide_scratchpad) else stringResource(R.string.scratchpad)}",
-            active = state.scratchOpen,
-            onClick = onToggleScratchpad,
-            testTag = "scratchpad_toggle_button",
-        )
-        ToolChip(
-            label = "📝 ${if (state.usingPaper) stringResource(R.string.using_paper) else stringResource(R.string.im_using_paper)}",
-            active = state.usingPaper,
-            onClick = onTogglePaper,
-            testTag = "paper_toggle_button",
-        )
-        if (question.hint != null && state.phase == PlayerPhase.ANSWERING) {
+        key("scratchpad") {
             ToolChip(
-                label = "💡 ${if (state.showHint) stringResource(R.string.hint_shown) else stringResource(R.string.need_a_hint)}",
-                active = state.showHint,
-                onClick = onRevealHint,
-                testTag = "hint_button",
+                label = "✏️ ${if (state.scratchOpen) stringResource(R.string.hide_scratchpad) else stringResource(R.string.scratchpad)}",
+                active = state.scratchOpen,
+                onClick = onToggleScratchpad,
+                testTag = "scratchpad_toggle_button",
             )
         }
-        if (question.voiceAnswer == true && answer is Answer.Choice && recognizerAvailable && state.phase == PlayerPhase.ANSWERING) {
+        key("paper") {
             ToolChip(
-                label = "🎤 ${if (isListening) stringResource(R.string.listening) else stringResource(R.string.say_it)}",
-                active = isListening,
-                onClick = onVoiceAnswer,
-                testTag = "say_it_button",
+                label = "📝 ${if (state.usingPaper) stringResource(R.string.using_paper) else stringResource(R.string.im_using_paper)}",
+                active = state.usingPaper,
+                onClick = onTogglePaper,
+                testTag = "paper_toggle_button",
             )
+        }
+        if (question.hint != null && state.phase == PlayerPhase.ANSWERING) {
+            key("hint") {
+                ToolChip(
+                    label = "💡 ${if (state.showHint) stringResource(R.string.hint_shown) else stringResource(R.string.need_a_hint)}",
+                    active = state.showHint,
+                    onClick = onRevealHint,
+                    testTag = "hint_button",
+                )
+            }
+        }
+        if (question.voiceAnswer == true && answer is Answer.Choice && recognizerAvailable && state.phase == PlayerPhase.ANSWERING) {
+            key("voice") {
+                ToolChip(
+                    label = "🎤 ${if (isListening) stringResource(R.string.listening) else stringResource(R.string.say_it)}",
+                    active = isListening,
+                    onClick = onVoiceAnswer,
+                    testTag = "say_it_button",
+                )
+            }
         }
     }
 
@@ -1216,6 +1229,7 @@ private fun QuestionContent(
             }
         }
     }
+    }
 }
 
 @Composable
@@ -1467,22 +1481,24 @@ private fun OrderBoardView(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         remaining.forEachIndexed { i, item ->
-                            Box(
-                                modifier = Modifier
-                                    .heightIn(min = 50.dp)
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .background(QuestColors.Cream)
-                                    .clickable { onPlace(item) }
-                                    .padding(horizontal = 16.dp, vertical = 10.dp)
-                                    .testTag("order_item_$i"),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(
-                                    text = item,
-                                    color = QuestColors.Ink,
-                                    fontSize = 18.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                )
+                            key(item) {
+                                Box(
+                                    modifier = Modifier
+                                        .heightIn(min = 50.dp)
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .background(QuestColors.Cream)
+                                        .clickable { onPlace(item) }
+                                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                                        .testTag("order_item_$i"),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        text = item,
+                                        color = QuestColors.Ink,
+                                        fontSize = 18.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                    )
+                                }
                             }
                         }
                     }

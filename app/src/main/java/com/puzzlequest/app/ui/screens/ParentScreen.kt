@@ -114,9 +114,7 @@ fun ParentScreen(
 ) {
     val students by repository.students.collectAsStateWithLifecycle()
     val dataVersion by repository.dataVersion.collectAsStateWithLifecycle()
-    val scope = rememberCoroutineScope()
 
-    val context = LocalContext.current
     var pinInput by remember { mutableStateOf("") }
     var wrongPin by remember { mutableStateOf(false) }
     var lockedUntilMs by remember { mutableLongStateOf(repository.getPinLockedUntilMs()) }
@@ -213,8 +211,32 @@ fun ParentScreen(
                 }
             }
         }
-        return
+    } else {
+        ParentUnlockedContent(
+            students = students,
+            dataVersion = dataVersion,
+            contentBank = contentBank,
+            repository = repository,
+            onUnlockStateChange = onUnlockStateChange,
+            onOpenReport = onOpenReport,
+            onBack = onBack,
+        )
     }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ParentUnlockedContent(
+    students: List<StudentRecord>,
+    dataVersion: Long,
+    contentBank: ContentBank,
+    repository: LearnerRepository,
+    onUnlockStateChange: (Boolean) -> Unit,
+    onOpenReport: (String) -> Unit,
+    onBack: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     var selectedStudentId by remember(students) { mutableStateOf(students.firstOrNull()?.id) }
     val activeStudent: StudentRecord? = students.firstOrNull { it.id == selectedStudentId } ?: students.firstOrNull()

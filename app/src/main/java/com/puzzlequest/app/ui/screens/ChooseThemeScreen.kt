@@ -371,8 +371,6 @@ fun ChooseThemeScreen(
         return packs
     }
 
-    val packs = remember(selectedFilter, contentBank) { buildPacks(selectedFilter) }
-
     QuestBackdrop {
         Column(
             modifier = Modifier
@@ -556,10 +554,11 @@ fun ChooseThemeScreen(
             }
 
             AnimatedContent(
-                targetState = packs,
+                targetState = selectedFilter,
                 transitionSpec = { fadeIn() togetherWith fadeOut() },
                 label = "category_packs",
-            ) { currentPacks ->
+            ) { filter ->
+                val currentPacks = remember(filter, contentBank) { buildPacks(filter) }
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(14.dp),

@@ -448,34 +448,33 @@ private fun InlineSvgVisualView(
                 Text(text = alt, color = QuestColors.Ink, fontSize = 13.sp, textAlign = TextAlign.Center)
             }
         }
-        return
-    }
-
-    VisualCard(modifier) {
-        if (aspect == null) {
-            Text(text = alt, color = QuestColors.Ink, fontSize = 15.sp, textAlign = TextAlign.Center)
-        } else {
-            BoxWithConstraints(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .widthIn(max = 380.dp)
-                    .aspectRatio(aspect),
-                contentAlignment = Alignment.Center,
-            ) {
-                val wPx = with(density) { maxWidth.roundToPx().coerceIn(64, 1024) }
-                val hPx = (wPx / aspect).toInt().coerceIn(64, 1024)
-                val bitmap = remember(svgString, wPx, hPx) {
-                    renderSvgToBitmap(svgString, wPx, hPx)
-                }
-                if (bitmap != null) {
-                    Image(
-                        bitmap = bitmap,
-                        contentDescription = alt,
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else {
-                    Text(text = alt, color = QuestColors.Ink, fontSize = 15.sp, textAlign = TextAlign.Center)
+    } else {
+        VisualCard(modifier) {
+            if (aspect == null) {
+                Text(text = alt, color = QuestColors.Ink, fontSize = 15.sp, textAlign = TextAlign.Center)
+            } else {
+                BoxWithConstraints(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = 380.dp)
+                        .aspectRatio(aspect),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val wPx = with(density) { maxWidth.roundToPx().coerceIn(64, 1024) }
+                    val hPx = (wPx / aspect).toInt().coerceIn(64, 1024)
+                    val bitmap = remember(svgString, wPx, hPx) {
+                        renderSvgToBitmap(svgString, wPx, hPx)
+                    }
+                    if (bitmap != null) {
+                        Image(
+                            bitmap = bitmap,
+                            contentDescription = alt,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else {
+                        Text(text = alt, color = QuestColors.Ink, fontSize = 15.sp, textAlign = TextAlign.Center)
+                    }
                 }
             }
         }

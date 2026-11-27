@@ -6,6 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -76,94 +77,101 @@ fun ConfettiOverlay(
     visible: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    if (!visible || burstId <= 0) return
-
-    val particles = remember(burstId, intensity) {
-        generateParticles(seed = burstId * 7919 + intensity.ordinal * 31, intensity = intensity)
-    }
-    val totalDurationSec = remember(particles) {
-        particles.maxOfOrNull { it.delaySec + it.lifeSec } ?: 0f
-    }
-
-    var elapsedSec by remember(burstId) { mutableFloatStateOf(0f) }
-
-    LaunchedEffect(burstId, totalDurationSec) {
-        elapsedSec = 0f
-        if (totalDurationSec <= 0f) return@LaunchedEffect
-        var startNanos = 0L
-        while (elapsedSec < totalDurationSec) {
-            withFrameNanos { frameNanos ->
-                if (startNanos == 0L) startNanos = frameNanos
-                elapsedSec = ((frameNanos - startNanos) / 1_000_000_000f).coerceAtLeast(0f)
-            }
+    if (visible && burstId > 0) {
+        val particles = remember(burstId, intensity) {
+            generateParticles(seed = burstId * 7919 + intensity.ordinal * 31, intensity = intensity)
         }
-    }
+        val totalDurationSec = remember(particles) {
+            particles.maxOfOrNull { it.delaySec + it.lifeSec } ?: 0f
+        }
 
-    if (elapsedSec >= totalDurationSec) return
+        val elapsedSec = remember(burstId) { mutableFloatStateOf(0f) }
+        var finished by remember(burstId) { mutableStateOf(totalDurationSec <= 0f) }
 
-    val reusablePath = remember { Path() }
-
-    Canvas(
-        modifier = modifier
-            .fillMaxSize()
-            .testTag("confetti_overlay")
-            .semantics {},
-    ) {
-        val w = size.width
-        val h = size.height
-        if (w <= 0f || h <= 0f) return@Canvas
-
-        val tNow = elapsedSec
-        for (i in particles.indices) {
-            val p = particles[i]
-            val localT = tNow - p.delaySec
-            if (localT <= 0f || localT >= p.lifeSec) continue
-
-            val progress = localT / p.lifeSec
-
-            // Exponential air drag gives a punchy launch followed by gentle floating drift.
-            val dragIntegral = if (p.drag > 0.001f) {
-                (1f - exp(-p.drag * localT)) / p.drag
-            } else {
-                localT
+        LaunchedEffect(burstId, totalDurationSec) {
+            elapsedSec.floatValue = 0f
+            if (totalDurationSec <= 0f) {
+                finished = true
+                return@LaunchedEffect
             }
-
-            val sway = p.swayAmplitude * sin(p.swayFreq * localT + p.swayPhase) *
-                (progress.coerceAtMost(0.35f) / 0.35f)
-
-            val nx = p.originX + p.vx * dragIntegral + sway
-            val ny = p.originY + p.vy * dragIntegral + 0.5f * p.gravity * localT * localT
-
-            if (ny > 1.15f || nx < -0.15f || nx > 1.15f) continue
-
-            val fadeIn = (progress / 0.05f).coerceIn(0f, 1f)
-            val fadeOut = ((1f - progress) / 0.28f).coerceIn(0f, 1f)
-            val alpha = fadeIn * fadeOut
-            if (alpha <= 0.01f) continue
-
-            val flipCos = cos(p.flipPhase + p.flipSpeed * localT)
-            val flipScaleY = abs(flipCos).coerceAtLeast(0.22f)
-            val fillColor = (if (flipCos >= 0f) p.color else p.backColor).copy(alpha = alpha)
-
-            val cx = nx * w
-            val cy = ny * h
-            val basePx = p.sizeDp.dp.toPx()
-            val rotationDeg = p.initialRotation + p.spinSpeed * localT
-
-            withTransform({
-                translate(left = cx, top = cy)
-                rotate(degrees = rotationDeg, pivot = Offset.Zero)
-                if (p.shape != ParticleShape.CIRCLE) {
-                    scale(scaleX = 1f, scaleY = flipScaleY, pivot = Offset.Zero)
+            finished = false
+            var startNanos = 0L
+            while (elapsedSec.floatValue < totalDurationSec) {
+                withFrameNanos { frameNanos ->
+                    if (startNanos == 0L) startNanos = frameNanos
+                    elapsedSec.floatValue = ((frameNanos - startNanos) / 1_000_000_000f).coerceAtLeast(0f)
                 }
-            }) {
-                drawParticle(
-                    shape = p.shape,
-                    baseSize = basePx,
-                    aspectRatio = p.aspectRatio,
-                    color = fillColor,
-                    path = reusablePath,
-                )
+            }
+            finished = true
+        }
+
+        if (!finished) {
+            val reusablePath = remember { Path() }
+
+            Canvas(
+                modifier = modifier
+                    .fillMaxSize()
+                    .testTag("confetti_overlay")
+                    .semantics {},
+            ) {
+                val w = size.width
+                val h = size.height
+                if (w <= 0f || h <= 0f) return@Canvas
+
+                val tNow = elapsedSec.floatValue
+                if (tNow >= totalDurationSec) return@Canvas
+                for (i in particles.indices) {
+                    val p = particles[i]
+                    val localT = tNow - p.delaySec
+                    if (localT <= 0f || localT >= p.lifeSec) continue
+
+                    val progress = localT / p.lifeSec
+
+                    // Exponential air drag gives a punchy launch followed by gentle floating drift.
+                    val dragIntegral = if (p.drag > 0.001f) {
+                        (1f - exp(-p.drag * localT)) / p.drag
+                    } else {
+                        localT
+                    }
+
+                    val sway = p.swayAmplitude * sin(p.swayFreq * localT + p.swayPhase) *
+                        (progress.coerceAtMost(0.35f) / 0.35f)
+
+                    val nx = p.originX + p.vx * dragIntegral + sway
+                    val ny = p.originY + p.vy * dragIntegral + 0.5f * p.gravity * localT * localT
+
+                    if (ny > 1.15f || nx < -0.15f || nx > 1.15f) continue
+
+                    val fadeIn = (progress / 0.05f).coerceIn(0f, 1f)
+                    val fadeOut = ((1f - progress) / 0.28f).coerceIn(0f, 1f)
+                    val alpha = fadeIn * fadeOut
+                    if (alpha <= 0.01f) continue
+
+                    val flipCos = cos(p.flipPhase + p.flipSpeed * localT)
+                    val flipScaleY = abs(flipCos).coerceAtLeast(0.22f)
+                    val fillColor = (if (flipCos >= 0f) p.color else p.backColor).copy(alpha = alpha)
+
+                    val cx = nx * w
+                    val cy = ny * h
+                    val basePx = p.sizeDp.dp.toPx()
+                    val rotationDeg = p.initialRotation + p.spinSpeed * localT
+
+                    withTransform({
+                        translate(left = cx, top = cy)
+                        rotate(degrees = rotationDeg, pivot = Offset.Zero)
+                        if (p.shape != ParticleShape.CIRCLE) {
+                            scale(scaleX = 1f, scaleY = flipScaleY, pivot = Offset.Zero)
+                        }
+                    }) {
+                        drawParticle(
+                            shape = p.shape,
+                            baseSize = basePx,
+                            aspectRatio = p.aspectRatio,
+                            color = fillColor,
+                            path = reusablePath,
+                        )
+                    }
+                }
             }
         }
     }

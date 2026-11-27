@@ -198,13 +198,11 @@ private fun PuzzleQuestApp() {
                 }
             }
         }
-        return
-    }
-
-    NavHost(
-        navController = navController,
-        startDestination = HomeRoute,
-    ) {
+    } else {
+        NavHost(
+            navController = navController,
+            startDestination = HomeRoute,
+        ) {
         composable<HomeRoute> {
             val bank = contentBank
             val student = activeStudent
@@ -328,6 +326,7 @@ private fun PuzzleQuestApp() {
                     onBack = { navController.popBackStack() },
                 )
             }
+        }
         }
     }
 }
