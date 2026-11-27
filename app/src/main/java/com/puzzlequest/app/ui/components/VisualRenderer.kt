@@ -41,9 +41,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.ImageLoader
 import coil.compose.AsyncImage
-import coil.decode.SvgDecoder
 import coil.request.ImageRequest
 import com.caverock.androidsvg.SVG
 import com.puzzlequest.app.data.model.BarItem
@@ -436,21 +434,14 @@ private fun ImageVisualView(
     compact: Boolean,
     modifier: Modifier,
 ) {
-    val context = LocalContext.current
-    val svgImageLoader = remember(context) {
-        ImageLoader.Builder(context)
-            .components { add(SvgDecoder.Factory()) }
-            .build()
-    }
-
     if (compact) {
         Row(
             modifier = modifier,
             horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            AssetPictureTile(visual.src, visual.alt, svgImageLoader, compact = true)
-            visual.beside?.let { AssetPictureTile(it.src, it.alt, svgImageLoader, compact = true) }
+            AssetPictureTile(visual.src, visual.alt, compact = true)
+            visual.beside?.let { AssetPictureTile(it.src, it.alt, compact = true) }
         }
     } else {
         VisualCard(modifier) {
@@ -458,8 +449,8 @@ private fun ImageVisualView(
                 horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                AssetPictureTile(visual.src, visual.alt, svgImageLoader, compact = false)
-                visual.beside?.let { AssetPictureTile(it.src, it.alt, svgImageLoader, compact = false) }
+                AssetPictureTile(visual.src, visual.alt, compact = false)
+                visual.beside?.let { AssetPictureTile(it.src, it.alt, compact = false) }
             }
         }
     }
@@ -469,12 +460,15 @@ private fun ImageVisualView(
 private fun AssetPictureTile(
     src: String,
     alt: String,
-    imageLoader: ImageLoader,
     compact: Boolean,
 ) {
     val context = LocalContext.current
-    val assetPath = src.trimStart('/')
-    val uri = "file:///android_asset/$assetPath"
+    val request = remember(context, src) {
+        ImageRequest.Builder(context)
+            .data("file:///android_asset/${src.trimStart('/')}")
+            .crossfade(false)
+            .build()
+    }
     Box(
         modifier = Modifier
             .size(
@@ -488,11 +482,7 @@ private fun AssetPictureTile(
         contentAlignment = Alignment.Center,
     ) {
         AsyncImage(
-            model = ImageRequest.Builder(context)
-                .data(uri)
-                .crossfade(false)
-                .build(),
-            imageLoader = imageLoader,
+            model = request,
             contentDescription = alt,
             contentScale = ContentScale.Fit,
             modifier = Modifier.fillMaxSize(),
