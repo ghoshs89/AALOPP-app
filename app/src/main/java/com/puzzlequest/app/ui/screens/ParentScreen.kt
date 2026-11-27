@@ -56,17 +56,20 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.puzzlequest.app.R
 import com.puzzlequest.app.data.content.ContentBank
 import com.puzzlequest.app.data.db.AttemptEntity
+import com.puzzlequest.app.data.db.DailyChallengeRecord
 import com.puzzlequest.app.data.db.ParentNoteRecord
 import com.puzzlequest.app.data.db.StudentRecord
 import com.puzzlequest.app.data.model.StrandLabels
 import com.puzzlequest.app.data.repository.LearnerRepository
 import com.puzzlequest.app.engine.AttemptRecord
+import com.puzzlequest.app.engine.DailyChallengeEngine
 import com.puzzlequest.app.engine.Dates
 import com.puzzlequest.app.engine.InsightAttempt
 import com.puzzlequest.app.engine.InsightsEngine
 import com.puzzlequest.app.engine.SessionSelector
 import com.puzzlequest.app.engine.SkillStateEngine
 import com.puzzlequest.app.engine.SkillStatus
+import com.puzzlequest.app.ui.components.CategoryProgressChartCard
 import com.puzzlequest.app.ui.components.ChartCard
 import com.puzzlequest.app.ui.components.DailyColumnsChart
 import com.puzzlequest.app.ui.components.PercentBarRow
@@ -219,6 +222,7 @@ fun ParentScreen(
     var activeTab by remember { mutableStateOf(ParentTab.OVERVIEW) }
     var attempts by remember { mutableStateOf<List<AttemptEntity>>(emptyList()) }
     var notes by remember { mutableStateOf<List<ParentNoteRecord>>(emptyList()) }
+    var dailyChallenges by remember { mutableStateOf<List<DailyChallengeRecord>>(emptyList()) }
     var showPinDialog by remember { mutableStateOf(false) }
     var showAddPlayerDialog by remember { mutableStateOf(false) }
 
@@ -226,6 +230,7 @@ fun ParentScreen(
         val id = activeStudent?.id ?: return@LaunchedEffect
         attempts = repository.getAttempts(id)
         notes = repository.getNotes(id)
+        dailyChallenges = repository.getDailyChallenges(id)
     }
 
     val today = remember { Dates.today() }
@@ -282,7 +287,7 @@ fun ParentScreen(
                     color = QuestColors.Cream,
                 )
                 TextButton(onClick = onBack, modifier = Modifier.testTag("parent_home_button")) {
-                    Text("🏠 Players", color = QuestColors.CreamDim, fontWeight = FontWeight.Bold)
+                    Text("🏠 Puzzles", color = QuestColors.CreamDim, fontWeight = FontWeight.Bold)
                 }
             }
 
@@ -386,59 +391,85 @@ fun ParentScreen(
             } else {
                 when (activeTab) {
                     ParentTab.OVERVIEW -> {
-                        if (insightAttempts.isEmpty()) {
-                            Text(
-                                text = "No answers yet. The overview fills in after the first session.",
-                                color = QuestColors.CreamDim,
-                                fontSize = 16.sp,
-                            )
-                        } else {
-                            val summary = InsightsEngine.summarize(insightAttempts, today)
-                            val days = InsightsEngine.dailyActivity(insightAttempts, today, 14)
-                            val weeks = InsightsEngine.weeklyAccuracy(insightAttempts, today, 8)
-                            val strands = InsightsEngine.accuracyByStrand(insightAttempts, contentBank.questionsById, contentBank.skills)
-                            val split = InsightsEngine.everydayVsReasoning(insightAttempts, contentBank.questionsById, contentBank.skills)
-                            val calibration = InsightsEngine.confidenceCalibration(insightAttempts)
-                            val masteredCount = skillStates.values.count {
-                                it.status == SkillStatus.MASTERED || it.status == SkillStatus.REVIEW_DUE
+                        val summary = InsightsEngine.summarize(insightAttempts, today)
+                        val days = InsightsEngine.dailyActivity(insightAttempts, today, 14)
+                        val weeks = InsightsEngine.weeklyAccuracy(insightAttempts, today, 8)
+                        val strands = InsightsEngine.accuracyByStrand(insightAttempts, contentBank.questionsById, contentBank.skills)
+                        val split = InsightsEngine.everydayVsReasoning(insightAttempts, contentBank.questionsById, contentBank.skills)
+                        val calibration = InsightsEngine.confidenceCalibration(insightAttempts)
+                        val masteredCount = skillStates.values.count {
+                            it.status == SkillStatus.MASTERED || it.status == SkillStatus.REVIEW_DUE
+                        }
+                        val weekPct = summary.lastWeek.percent
+
+                        val progressSummary = remember(attempts, dailyChallenges, today) {
+                            DailyChallengeEngine.computeProgressSummary(attempts, dailyChallenges, today)
+                        }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                StatTile(
+                                    label = "Answered (last 7 days)",
+                                    value = summary.lastWeek.answered.toString(),
+                                    detail = if (weekPct == null) "No answers this week" else "$weekPct% right",
+                                    modifier = Modifier.weight(1f),
+                                )
+                                StatTile(
+                                    label = "Practice days (last 14)",
+                                    value = summary.practiceDaysLast14.toString(),
+                                    modifier = Modifier.weight(1f),
+                                )
                             }
-                            val weekPct = summary.lastWeek.percent
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                StatTile(
+                                    label = "Skills mastered",
+                                    value = "$masteredCount of ${contentBank.skills.size}",
+                                    detail = "Includes skills due for review",
+                                    modifier = Modifier.weight(1f),
+                                )
+                                StatTile(
+                                    label = "Worked it out",
+                                    value = summary.scratchpadShare?.let { "$it%" } ?: "Not yet",
+                                    detail = "Used scratchpad or paper",
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                StatTile(
+                                    label = "Progress points",
+                                    value = "${progressSummary.totalPoints} pts",
+                                    detail = "+${progressSummary.dailyBonusPoints} from daily challenges",
+                                    modifier = Modifier.weight(1f),
+                                )
+                                StatTile(
+                                    label = "Daily challenges",
+                                    value = progressSummary.dailyCompletedCount.toString(),
+                                    detail = if (progressSummary.dailyStreak > 0) {
+                                        "${progressSummary.dailyStreak}-day streak"
+                                    } else {
+                                        "Ready for today's challenge"
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
 
-                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                ) {
-                                    StatTile(
-                                        label = "Answered (last 7 days)",
-                                        value = summary.lastWeek.answered.toString(),
-                                        detail = if (weekPct == null) "No answers this week" else "$weekPct% right",
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                    StatTile(
-                                        label = "Practice days (last 14)",
-                                        value = summary.practiceDaysLast14.toString(),
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                }
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                ) {
-                                    StatTile(
-                                        label = "Skills mastered",
-                                        value = "$masteredCount of ${contentBank.skills.size}",
-                                        detail = "Includes skills due for review",
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                    StatTile(
-                                        label = "Worked it out",
-                                        value = summary.scratchpadShare?.let { "$it%" } ?: "Not yet",
-                                        detail = "Used scratchpad or paper",
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                }
+                            CategoryProgressChartCard(
+                                attempts = insightAttempts,
+                                questionsById = contentBank.questionsById,
+                                skills = contentBank.skills,
+                                today = today,
+                            )
 
+                            if (insightAttempts.isNotEmpty()) {
                                 ChartCard(
                                     title = "Everyday skills and reasoning",
                                     subtitle = "Percent right. Everyday skills are time, money, measuring, graphs and calendars.",

@@ -20,30 +20,53 @@ import androidx.compose.ui.unit.sp
 import com.puzzlequest.app.R
 
 object QuestColors {
-    val BgTop = Color(0xFF2C5C3E)
-    val BgDeep = Color(0xFF0E2018)
-    val BgMid = Color(0xFF173327)
-    val BgHill = Color(0xFF20452F)
-    val Cream = Color(0xFFF6F1E4)
-    val CreamDim = Color(0xFFCFE3D4)
-    val Gold = Color(0xFFE8C158)
-    val Moss = Color(0xFF8FBF5C)
-    val MossLight = Color(0xFFC7E29A)
-    val Danger = Color(0xFFE2604F)
-    val Ink = Color(0xFF1D2F4B)
-    val VisualTile = Color(0xB8FFFFFF)
+    // Calm, low-glare eucalyptus-slate dusk surfaces (easy on the eyes, no harsh pitch-black)
+    val BgTop = Color(0xFF2C3734)
+    val BgDeep = Color(0xFF1C2422)
+    val BgMid = Color(0xFF232C2A)
+    val BgHill = Color(0xFF2E3A37)
 
-    // Parent dashboard light dataviz palette (matches VIZ in Charts.tsx)
-    val VizSurface = Color(0xFFFCFCFB)
-    val VizInk = Color(0xFF0B0B0B)
-    val VizInk2 = Color(0xFF52514E)
-    val VizMuted = Color(0xFF898781)
-    val VizGrid = Color(0xFFE1E0D9)
-    val VizBaseline = Color(0xFFC3C2B7)
-    val VizSeries = Color(0xFF2A78D6)
-    val VizSeriesLight = Color(0xFFB7D3F6)
-    val VizGood = Color(0xFF0CA30C)
-    val VizWarning = Color(0xFFFAB219)
+    // Warm matte parchment & soft ink (zero glaring pure white)
+    val Cream = Color(0xFFE6E1D5)
+    val PaperSoft = Color(0xFFEFEBE1)
+    val CreamDim = Color(0xFFB7C1BA)
+    val Gold = Color(0xFFD6B97E)
+    val Moss = Color(0xFF7FA87E)
+    val MossLight = Color(0xFFB4CFB1)
+    val Danger = Color(0xFFDF8B7F)
+    val Ink = Color(0xFF242E38)
+    val VisualTile = Color(0xCCECE7DC)
+
+    // Parent dashboard soft warm-paper dataviz palette
+    val VizSurface = Color(0xFFF3EFE6)
+    val VizInk = Color(0xFF28302E)
+    val VizInk2 = Color(0xFF555E5B)
+    val VizMuted = Color(0xFF7F8783)
+    val VizGrid = Color(0xFFDFDACE)
+    val VizBaseline = Color(0xFFC4BFB2)
+    val VizSeries = Color(0xFF4C7AA8)
+    val VizSeriesLight = Color(0xFFC4D6E8)
+    val VizGood = Color(0xFF4F8F63)
+    val VizWarning = Color(0xFFD49B4B)
+
+    // Soft pastel-warm confetti particle palette (joyful without neon glare)
+    val ConfettiAmber = Color(0xFFDFB874)
+    val ConfettiCoral = Color(0xFFD98A7C)
+    val ConfettiSky = Color(0xFF7FB3C8)
+    val ConfettiLavender = Color(0xFFA997C9)
+    val ConfettiMint = Color(0xFF82BA9D)
+
+    val ConfettiPalette = listOf(
+        Gold,
+        Moss,
+        MossLight,
+        Cream,
+        ConfettiAmber,
+        ConfettiCoral,
+        ConfettiSky,
+        ConfettiLavender,
+        ConfettiMint,
+    )
 }
 
 val BalooDisplayFont = FontFamily(
@@ -141,8 +164,8 @@ private val QuestColorScheme = darkColorScheme(
     surfaceVariant = QuestColors.BgHill,
     onSurfaceVariant = QuestColors.CreamDim,
     error = QuestColors.Danger,
-    onError = QuestColors.Cream,
-    outline = Color(0x26FFFFFF),
+    onError = QuestColors.Ink,
+    outline = Color(0x22E6E1D5),
 )
 
 @Composable
@@ -166,11 +189,11 @@ fun QuestBackdrop(
                 Brush.radialGradient(
                     colorStops = arrayOf(
                         0.0f to QuestColors.BgTop,
-                        0.45f to QuestColors.BgMid,
+                        0.50f to QuestColors.BgMid,
                         1.0f to QuestColors.BgDeep,
                     ),
                     center = Offset(540f, -120f),
-                    radius = 1500f,
+                    radius = 1550f,
                 ),
             ),
         content = content,

@@ -114,7 +114,7 @@ fun ReportScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.White),
+            .background(QuestColors.VizSurface),
     ) {
         Column(
             modifier = Modifier
@@ -173,7 +173,7 @@ fun ReportScreen(
                         }
                         context.startActivity(Intent.createChooser(intent, "Share progress report"))
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = QuestColors.VizSeries, contentColor = Color.White),
+                    colors = ButtonDefaults.buttonColors(containerColor = QuestColors.VizSeries, contentColor = QuestColors.PaperSoft),
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.testTag("share_report_button"),
                 ) {

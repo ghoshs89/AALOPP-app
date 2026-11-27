@@ -50,4 +50,27 @@
     <string name="draw_here_hint">Draw here to work it out</string>
     <string name="undo">Undo</string>
     <string name="clear">Clear</string>
+    <string name="category_progress_title">Progress by category over time</string>
+    <string name="category_progress_subtitle">Compare puzzle categories across days or weeks. Tap chips to focus or drag across the graph.</string>
+    <string name="category_progress_chart_desc">Line graph showing progress across puzzle categories over time</string>
+    <string name="category_progress_empty_title">No category trends yet</string>
+    <string name="category_progress_empty_tip">Complete a puzzle session to see accuracy and volume trends across categories.</string>
+    <string name="all_categories">All</string>
+    <string name="filter_all">All</string>
+    <string name="filter_math">Math</string>
+    <string name="filter_logic">Logic</string>
+    <string name="filter_language">Language</string>
+    <string name="filter_world">World</string>
+    <string name="category_filter_bar_desc">Filter puzzles by category</string>
+    <string name="no_puzzles_in_category">No puzzles available in this category yet.</string>
+    <string name="daily_challenge_badge">Daily Challenge</string>
+    <string name="daily_challenge_subtitle">Hand-picked puzzle of the day</string>
+    <string name="daily_challenge_start">Play Challenge</string>
+    <string name="daily_challenge_completed">Completed today</string>
+    <string name="daily_challenge_replay">Replay for practice</string>
+    <string name="daily_challenge_bonus_pts">+%1$d bonus pts</string>
+    <string name="daily_challenge_earned_pts">+%1$d bonus pts earned!</string>
+    <string name="progress_points_label">%1$d pts</string>
+    <string name="daily_streak_label">%1$d-day streak</string>
+    <string name="grown_ups_settings_desc">Grown-ups settings and progress dashboard</string>
 </resources>

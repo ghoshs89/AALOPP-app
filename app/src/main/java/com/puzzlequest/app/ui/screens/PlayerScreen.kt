@@ -40,6 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
@@ -52,7 +53,9 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -67,7 +70,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.puzzlequest.app.R
 import com.puzzlequest.app.data.model.Answer
 import com.puzzlequest.app.data.model.Question
+import com.puzzlequest.app.engine.Dates
 import com.puzzlequest.app.engine.Grading
+import com.puzzlequest.app.ui.components.ConfettiOverlay
 import com.puzzlequest.app.ui.components.ScratchStroke
 import com.puzzlequest.app.ui.components.ScratchpadCanvas
 import com.puzzlequest.app.ui.components.VisualView
@@ -82,7 +87,14 @@ fun PlayerScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
     var isListening by remember { mutableStateOf(false) }
+
+    LaunchedEffect(state.confettiBurstId) {
+        if (state.confettiBurstId > 0) {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        }
+    }
 
     val recognizerAvailable = remember(context) {
         SpeechRecognizer.isRecognitionAvailable(context)
@@ -195,7 +207,7 @@ fun PlayerScreen(
                             onLeave()
                         }
                         .testTag("home_button")
-                        .semantics { contentDescription = "Back to players" },
+                        .semantics { contentDescription = "Back to puzzles" },
                     contentAlignment = Alignment.Center,
                 ) {
                     Text("🏠", fontSize = 22.sp)
@@ -264,6 +276,7 @@ fun PlayerScreen(
 
                     PlayerPhase.READY -> {
                         val student = state.student
+                        val dailyPlan = state.dailyChallengePlan
                         if (state.questions.isEmpty()) {
                             Text(
                                 text = "No puzzles available yet.",
@@ -274,6 +287,60 @@ fun PlayerScreen(
                                     .fillMaxWidth()
                                     .padding(top = 64.dp),
                             )
+                        } else if (state.isDailyChallenge && dailyPlan != null) {
+                            val plan = dailyPlan
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 32.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(16.dp),
+                            ) {
+                                Text(
+                                    text = "🏆 ${stringResource(R.string.daily_challenge_badge).uppercase()} · ${Dates.shortLabel(plan.localDate).uppercase()}",
+                                    color = QuestColors.Gold,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 13.sp,
+                                    letterSpacing = 1.2.sp,
+                                )
+                                Text(text = plan.strandEmoji, fontSize = 76.sp)
+                                Text(
+                                    text = plan.strandLabel,
+                                    style = MaterialTheme.typography.displayMedium,
+                                    color = QuestColors.Cream,
+                                    textAlign = TextAlign.Center,
+                                )
+                                Text(
+                                    text = plan.adjustmentSummary,
+                                    color = QuestColors.MossLight,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 16.sp,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .background(QuestColors.BgMid)
+                                        .border(1.5.dp, QuestColors.Moss.copy(alpha = 0.5f), RoundedCornerShape(50))
+                                        .padding(horizontal = 16.dp, vertical = 7.dp),
+                                )
+                                Text(
+                                    text = if (plan.isCompletedToday) {
+                                        "You already earned today's bonus — play again for practice!"
+                                    } else {
+                                        "Complete today's hand-picked puzzle to earn +${plan.bonusPoints} bonus progress points."
+                                    },
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = QuestColors.CreamDim,
+                                    textAlign = TextAlign.Center,
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                BigQuestButton(
+                                    text = "${stringResource(R.string.daily_challenge_start)} 🚀",
+                                    background = QuestColors.Gold,
+                                    contentColor = QuestColors.Ink,
+                                    onClick = { viewModel.startSession() },
+                                    modifier = Modifier.testTag("start_session_button"),
+                                )
+                            }
                         } else {
                             Column(
                                 modifier = Modifier
@@ -362,6 +429,7 @@ fun PlayerScreen(
                     PlayerPhase.DONE -> {
                         val tried = state.index + 1
                         val studentName = state.student?.name ?: "friend"
+                        val bonusEarned = state.dailyBonusAwarded ?: 0
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -370,29 +438,62 @@ fun PlayerScreen(
                             verticalArrangement = Arrangement.spacedBy(18.dp),
                         ) {
                             Text(
-                                text = "⭐".repeat(minOf(tried, 10)),
+                                text = if (state.isDailyChallenge) "🏆✨⭐" else "⭐".repeat(minOf(tried, 10)),
                                 fontSize = 42.sp,
                                 textAlign = TextAlign.Center,
                                 lineHeight = 52.sp,
                             )
                             Text(
-                                text = "Great work, $studentName!",
+                                text = if (state.isDailyChallenge) {
+                                    "Daily Challenge complete, $studentName!"
+                                } else {
+                                    "Great work, $studentName!"
+                                },
                                 style = MaterialTheme.typography.displayLarge,
                                 color = QuestColors.Cream,
                                 textAlign = TextAlign.Center,
                             )
-                            Text(
-                                text = "You tried $tried puzzles. Every try makes your brain stronger.",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = QuestColors.CreamDim,
-                                textAlign = TextAlign.Center,
-                            )
-                            Text(
-                                text = "Time for a break. Go stretch like a kangaroo! 🦘",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = QuestColors.Cream,
-                                textAlign = TextAlign.Center,
-                            )
+                            if (state.isDailyChallenge) {
+                                if (bonusEarned > 0) {
+                                    Text(
+                                        text = stringResource(R.string.daily_challenge_earned_pts, bonusEarned),
+                                        color = QuestColors.Ink,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 18.sp,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(50))
+                                            .background(QuestColors.Gold)
+                                            .padding(horizontal = 20.dp, vertical = 8.dp)
+                                            .testTag("daily_bonus_awarded_pill"),
+                                    )
+                                }
+                                Text(
+                                    text = "Total progress: ${state.totalProgressPoints} pts" +
+                                        if (state.dailyStreak > 0) " · 🔥 ${state.dailyStreak}-day streak" else "",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = QuestColors.MossLight,
+                                    textAlign = TextAlign.Center,
+                                )
+                                Text(
+                                    text = "Come back tomorrow for a brand-new hand-picked puzzle!",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = QuestColors.CreamDim,
+                                    textAlign = TextAlign.Center,
+                                )
+                            } else {
+                                Text(
+                                    text = "You tried $tried puzzles. Every try makes your brain stronger.",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = QuestColors.CreamDim,
+                                    textAlign = TextAlign.Center,
+                                )
+                                Text(
+                                    text = "Time for a break. Go stretch like a kangaroo! 🦘",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = QuestColors.Cream,
+                                    textAlign = TextAlign.Center,
+                                )
+                            }
                             Spacer(Modifier.height(6.dp))
                             BigQuestButton(
                                 text = stringResource(R.string.all_done),
@@ -432,6 +533,17 @@ fun PlayerScreen(
                 }
             }
         }
+
+        // Non-blocking celebratory particle confetti overlay
+        val isCelebrating = (state.phase == PlayerPhase.FEEDBACK &&
+            (state.result?.correct == true || state.result?.foundWithNudge == true)) ||
+            state.phase == PlayerPhase.DONE
+        ConfettiOverlay(
+            burstId = state.confettiBurstId,
+            intensity = state.confettiIntensity,
+            visible = isCelebrating,
+            modifier = Modifier.fillMaxSize(),
+        )
     }
 }
 
@@ -465,6 +577,41 @@ private fun QuestionContent(
     // Keep scratch strokes alive across hide/reopen for the same question
     val strokes = key(question.id) { remember { mutableStateListOf<ScratchStroke>() } }
 
+    val dailyPlan = state.dailyChallengePlan
+    if (state.isDailyChallenge && dailyPlan != null) {
+        val plan = dailyPlan
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 10.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(QuestColors.BgMid)
+                .border(1.5.dp, QuestColors.Gold.copy(alpha = 0.65f), RoundedCornerShape(16.dp))
+                .padding(horizontal = 14.dp, vertical = 9.dp)
+                .testTag("daily_challenge_header_banner"),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "🏆 ${plan.strandEmoji} ${plan.strandLabel} · Level ${plan.targetBand}",
+                color = QuestColors.Cream,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 14.sp,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "+${plan.bonusPoints} pts",
+                color = QuestColors.Ink,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 12.sp,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(QuestColors.Gold)
+                    .padding(horizontal = 10.dp, vertical = 3.dp),
+            )
+        }
+    }
+
     // Cream Question Card
     Column(
         modifier = Modifier
@@ -480,7 +627,7 @@ private fun QuestionContent(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(18.dp))
-                    .background(Color.White)
+                    .background(QuestColors.PaperSoft)
                     .border(2.dp, QuestColors.Ink.copy(alpha = 0.1f), RoundedCornerShape(18.dp))
                     .padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -877,6 +1024,44 @@ private fun QuestionContent(
                         fontSize = 19.sp,
                         fontWeight = FontWeight.Bold,
                     )
+                }
+            }
+
+            if (state.isDailyChallenge) {
+                val awarded = state.dailyBonusAwarded ?: 0
+                if (awarded > 0) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(QuestColors.Gold.copy(alpha = 0.18f))
+                            .border(1.5.dp, QuestColors.Gold, RoundedCornerShape(16.dp))
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                            .testTag("daily_bonus_feedback_banner"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            text = if (res.correct || res.foundWithNudge) {
+                                "🏆 Daily Challenge Bonus!"
+                            } else {
+                                "🌟 Daily Challenge Effort Bonus!"
+                            },
+                            color = QuestColors.Gold,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 15.sp,
+                        )
+                        Text(
+                            text = "+$awarded pts",
+                            color = QuestColors.Ink,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 14.sp,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .background(QuestColors.Gold)
+                                .padding(horizontal = 10.dp, vertical = 4.dp),
+                        )
+                    }
                 }
             }
 

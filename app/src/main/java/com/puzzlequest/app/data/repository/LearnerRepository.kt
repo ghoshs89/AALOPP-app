@@ -2,6 +2,7 @@ package com.puzzlequest.app.data.repository
 
 import android.content.Context
 import com.puzzlequest.app.data.db.AttemptEntity
+import com.puzzlequest.app.data.db.DailyChallengeRecord
 import com.puzzlequest.app.data.db.ParentNoteRecord
 import com.puzzlequest.app.data.db.PuzzleQuestDatabase
 import com.puzzlequest.app.data.db.StudentRecord
@@ -64,6 +65,15 @@ class LearnerRepository(context: Context) {
 
     suspend fun deleteNote(noteId: String) {
         withContext(Dispatchers.IO) { db.deleteNote(noteId) }
+        _dataVersion.value += 1
+    }
+
+    suspend fun getDailyChallenges(studentId: String): List<DailyChallengeRecord> = withContext(Dispatchers.IO) {
+        db.getDailyChallengesForStudent(studentId)
+    }
+
+    suspend fun recordDailyChallenge(record: DailyChallengeRecord) {
+        withContext(Dispatchers.IO) { db.upsertDailyChallenge(record) }
         _dataVersion.value += 1
     }
 

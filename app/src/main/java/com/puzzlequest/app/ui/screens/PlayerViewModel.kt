@@ -5,11 +5,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.puzzlequest.app.data.content.ContentBank
 import com.puzzlequest.app.data.db.AttemptEntity
+import com.puzzlequest.app.data.db.DailyChallengeRecord
 import com.puzzlequest.app.data.db.StudentRecord
 import com.puzzlequest.app.data.model.Answer
 import com.puzzlequest.app.data.model.Question
 import com.puzzlequest.app.data.repository.LearnerRepository
 import com.puzzlequest.app.engine.AttemptRecord
+import com.puzzlequest.app.engine.DailyChallengeEngine
+import com.puzzlequest.app.engine.DailyChallengePlan
 import com.puzzlequest.app.engine.Dates
 import com.puzzlequest.app.engine.Grading
 import com.puzzlequest.app.engine.PlayerResponse
@@ -19,6 +22,7 @@ import com.puzzlequest.app.engine.SpeechFormatter
 import com.puzzlequest.app.engine.SpeechPart
 import com.puzzlequest.app.engine.TtsController
 import com.puzzlequest.app.engine.shouldSuggestBreak
+import com.puzzlequest.app.ui.components.ConfettiIntensity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -50,6 +54,13 @@ data class PlayerUiState(
     val usingPaper: Boolean = false,
     val heard: HeardSpeech? = null,
     val voiceOn: Boolean = true,
+    val confettiBurstId: Int = 0,
+    val confettiIntensity: ConfettiIntensity = ConfettiIntensity.PUZZLE,
+    val isDailyChallenge: Boolean = false,
+    val dailyChallengePlan: DailyChallengePlan? = null,
+    val dailyBonusAwarded: Int? = null,
+    val totalProgressPoints: Int = 0,
+    val dailyStreak: Int = 0,
 ) {
     val currentQuestion: Question? get() = questions.getOrNull(index)
 
@@ -76,6 +87,8 @@ data class PlayerUiState(
 class PlayerViewModel(
     private val studentId: String,
     private val themeId: String?,
+    private val categoryKey: String? = null,
+    private val isDailyChallenge: Boolean = false,
     private val contentBank: ContentBank,
     private val repository: LearnerRepository,
     private val tts: TtsController,
@@ -117,6 +130,9 @@ class PlayerViewModel(
             }
             val student = students.firstOrNull { it.id == studentId } ?: students.firstOrNull()
             val history = if (student != null) repository.getAttempts(student.id) else emptyList()
+            val pastChallenges = if (student != null) repository.getDailyChallenges(student.id) else emptyList()
+            val today = Dates.today()
+            val progressSummary = DailyChallengeEngine.computeProgressSummary(history, pastChallenges, today)
             val attemptRecords = history.map {
                 AttemptRecord(
                     questionId = it.questionId,
@@ -125,19 +141,66 @@ class PlayerViewModel(
                     localDate = it.localDate,
                 )
             }
+            seenIds = history.map { it.questionId }.toSet()
+
+            if (isDailyChallenge && student != null) {
+                val dailyPlan = DailyChallengeEngine.selectDailyChallenge(
+                    studentId = student.id,
+                    questions = contentBank.reviewedQuestions,
+                    skills = contentBank.skills,
+                    attempts = attemptRecords,
+                    pastChallenges = pastChallenges,
+                    today = today,
+                )
+                reasons = if (dailyPlan != null) {
+                    mapOf(dailyPlan.question.id to "Daily challenge (${dailyPlan.adjustmentSummary})")
+                } else {
+                    emptyMap()
+                }
+                _uiState.update {
+                    it.copy(
+                        student = student,
+                        questions = listOfNotNull(dailyPlan?.question),
+                        phase = PlayerPhase.READY,
+                        voiceOn = repository.voiceOn.value,
+                        isDailyChallenge = true,
+                        dailyChallengePlan = dailyPlan,
+                        dailyBonusAwarded = null,
+                        totalProgressPoints = progressSummary.totalPoints,
+                        dailyStreak = progressSummary.dailyStreak,
+                    )
+                }
+                return@launch
+            }
+
             val chosenTheme = themeId?.let { id -> contentBank.themes.firstOrNull { it.id == id } }
+            val categorySkills: Set<String>? = when {
+                chosenTheme != null -> chosenTheme.skills.toSet()
+                categoryKey != null && categoryKey.startsWith("domain:") -> {
+                    val domain = categoryKey.removePrefix("domain:")
+                    contentBank.skills.filter { it.domain == domain }.map { it.code }.toSet()
+                }
+                categoryKey != null && categoryKey.startsWith("strand:") -> {
+                    val strand = categoryKey.removePrefix("strand:")
+                    contentBank.skills.filter { it.strand == strand }.map { it.code }.toSet()
+                }
+                categoryKey != null && categoryKey.startsWith("skill:") -> {
+                    setOf(categoryKey.removePrefix("skill:"))
+                }
+                else -> null
+            }
             val plan = SessionSelector.selectSession(
                 questions = contentBank.reviewedQuestions,
                 skills = contentBank.skills,
                 attempts = attemptRecords,
-                today = Dates.today(),
+                today = today,
                 options = SessionOptions(
                     themeSkills = contentBank.themes.flatMap { it.skills }.toSet(),
-                    onlySkills = chosenTheme?.skills?.toSet(),
+                    onlySkills = categorySkills?.takeIf { it.isNotEmpty() },
+                    pureCategory = chosenTheme == null && categorySkills != null,
                 ),
             )
             reasons = plan.picks.associate { it.questionId to it.reason }
-            seenIds = history.map { it.questionId }.toSet()
             val pickedQuestions = plan.picks.mapNotNull { contentBank.questionsById[it.questionId] }
 
             _uiState.update {
@@ -146,6 +209,10 @@ class PlayerViewModel(
                     questions = pickedQuestions,
                     phase = PlayerPhase.READY,
                     voiceOn = repository.voiceOn.value,
+                    isDailyChallenge = false,
+                    dailyChallengePlan = null,
+                    totalProgressPoints = progressSummary.totalPoints,
+                    dailyStreak = progressSummary.dailyStreak,
                 )
             }
         }
@@ -347,6 +414,15 @@ class PlayerViewModel(
             else -> "NONE"
         }
 
+        val nowMs = System.currentTimeMillis()
+        val today = Dates.today()
+        val celebrate = correct || foundWithNudge
+
+        var awardedBonus: Int? = null
+        var updatedDailyPlan = state.dailyChallengePlan
+        var newPoints = state.totalProgressPoints + if (correct) DailyChallengeEngine.REGULAR_CORRECT_POINTS else 0
+        var newStreak = state.dailyStreak
+
         state.student?.let { st ->
             val attempt = AttemptEntity(
                 id = UUID.randomUUID().toString(),
@@ -359,14 +435,48 @@ class PlayerViewModel(
                 firstActionMs = firstActionMs,
                 totalMs = totalMs,
                 listenCount = listenCount,
-                answeredAtMs = System.currentTimeMillis(),
-                localDate = Dates.today(),
+                answeredAtMs = nowMs,
+                localDate = today,
                 selectionReason = reasons[q.id]?.take(200),
                 scratchpad = scratchMode,
                 scratchpadStrokes = state.scratchStrokes,
             )
+
+            val dailyPlan = state.dailyChallengePlan
+            var newChallengeRecord: DailyChallengeRecord? = null
+            if (state.isDailyChallenge && dailyPlan != null) {
+                val alreadyCompleted = dailyPlan.isCompletedToday
+                val bonus = when {
+                    alreadyCompleted -> 0
+                    celebrate -> dailyPlan.bonusPoints
+                    else -> DailyChallengeEngine.DAILY_EFFORT_BONUS_POINTS
+                }
+                awardedBonus = bonus
+                if (!alreadyCompleted) {
+                    val record = DailyChallengeRecord(
+                        id = "${st.id}_${dailyPlan.localDate}",
+                        studentId = st.id,
+                        localDate = dailyPlan.localDate,
+                        questionId = dailyPlan.question.id,
+                        strand = dailyPlan.strand,
+                        difficultyBand = dailyPlan.targetBand,
+                        completed = true,
+                        isCorrect = celebrate,
+                        bonusPoints = bonus,
+                        completedAtMs = nowMs,
+                    )
+                    newChallengeRecord = record
+                    updatedDailyPlan = dailyPlan.copy(completedRecord = record)
+                    newPoints += bonus
+                    newStreak += 1
+                }
+            }
+
             viewModelScope.launch {
                 repository.recordAttempt(attempt, sessionStartedAtMs)
+                if (newChallengeRecord != null) {
+                    repository.recordDailyChallenge(newChallengeRecord)
+                }
             }
         }
 
@@ -376,6 +486,16 @@ class PlayerViewModel(
                 result = FeedbackResult(correct = correct, foundWithNudge = foundWithNudge),
                 showExplanation = !correct && !foundWithNudge,
                 offerBreak = shouldBreak,
+                confettiBurstId = if (celebrate) it.confettiBurstId + 1 else it.confettiBurstId,
+                confettiIntensity = when {
+                    celebrate && it.isDailyChallenge -> ConfettiIntensity.SESSION_DONE
+                    celebrate -> ConfettiIntensity.PUZZLE
+                    else -> it.confettiIntensity
+                },
+                dailyChallengePlan = updatedDailyPlan,
+                dailyBonusAwarded = awardedBonus,
+                totalProgressPoints = newPoints,
+                dailyStreak = newStreak,
             )
         }
 
@@ -407,7 +527,13 @@ class PlayerViewModel(
         tts.stop()
         val state = _uiState.value
         val tried = state.index + 1
-        _uiState.update { it.copy(phase = PlayerPhase.DONE) }
+        _uiState.update {
+            it.copy(
+                phase = PlayerPhase.DONE,
+                confettiBurstId = it.confettiBurstId + 1,
+                confettiIntensity = ConfettiIntensity.SESSION_DONE,
+            )
+        }
         state.student?.let { st ->
             autoSpeakText("Great work, ${st.name}! You tried $tried puzzles. Time for a break.")
         }

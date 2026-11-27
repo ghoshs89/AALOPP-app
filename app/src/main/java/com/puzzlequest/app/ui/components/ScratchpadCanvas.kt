@@ -55,8 +55,8 @@ data class ScratchStroke(
 )
 
 private val scratchInks = listOf(
-    Color(0xFF1D2F4B) to "Blue pen",
-    Color(0xFFD84957) to "Red pen",
+    Color(0xFF242E38) to "Blue pen",
+    Color(0xFFC26468) to "Red pen",
 )
 
 @Composable
@@ -145,8 +145,8 @@ fun ScratchpadCanvas(
                 .fillMaxWidth()
                 .height(220.dp)
                 .clip(RoundedCornerShape(16.dp))
-                .background(Color.White)
-                .border(2.dp, QuestColors.Ink.copy(alpha = 0.15f), RoundedCornerShape(16.dp)),
+                .background(QuestColors.PaperSoft)
+                .border(2.dp, QuestColors.Ink.copy(alpha = 0.14f), RoundedCornerShape(16.dp)),
             contentAlignment = Alignment.Center,
         ) {
             Canvas(

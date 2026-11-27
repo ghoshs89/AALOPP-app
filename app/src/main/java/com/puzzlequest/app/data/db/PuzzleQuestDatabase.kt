@@ -39,6 +39,19 @@ data class ParentNoteRecord(
     val createdAtMs: Long,
 )
 
+data class DailyChallengeRecord(
+    val id: String,
+    val studentId: String,
+    val localDate: String,
+    val questionId: String,
+    val strand: String,
+    val difficultyBand: Int,
+    val completed: Boolean,
+    val isCorrect: Boolean,
+    val bonusPoints: Int,
+    val completedAtMs: Long?,
+)
+
 class PuzzleQuestDatabase(context: Context) :
     SQLiteOpenHelper(context.applicationContext, DB_NAME, null, DB_VERSION) {
 
@@ -102,6 +115,7 @@ class PuzzleQuestDatabase(context: Context) :
             """.trimIndent(),
         )
         db.execSQL("CREATE INDEX idx_notes_student_time ON parent_notes(student_id, created_at_ms)")
+        createDailyChallengesTable(db)
 
         // Seed default learner profile matching prisma/seed.ts
         val seed = ContentValues().apply {
@@ -113,7 +127,34 @@ class PuzzleQuestDatabase(context: Context) :
         db.insert("students", null, seed)
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            createDailyChallengesTable(db)
+        }
+    }
+
+    private fun createDailyChallengesTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS daily_challenges (
+                id TEXT PRIMARY KEY,
+                student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+                local_date TEXT NOT NULL,
+                question_id TEXT NOT NULL,
+                strand TEXT NOT NULL,
+                difficulty_band INTEGER NOT NULL,
+                completed INTEGER NOT NULL DEFAULT 0,
+                is_correct INTEGER NOT NULL DEFAULT 0,
+                bonus_points INTEGER NOT NULL DEFAULT 0,
+                completed_at_ms INTEGER,
+                UNIQUE(student_id, local_date)
+            )
+            """.trimIndent(),
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS idx_daily_challenges_student_date ON daily_challenges(student_id, local_date)",
+        )
+    }
 
     fun getAllStudents(): List<StudentRecord> {
         val result = mutableListOf<StudentRecord>()
@@ -270,8 +311,58 @@ class PuzzleQuestDatabase(context: Context) :
         writableDatabase.delete("parent_notes", "id = ?", arrayOf(noteId))
     }
 
+    fun upsertDailyChallenge(record: DailyChallengeRecord) {
+        val cv = ContentValues().apply {
+            put("id", record.id)
+            put("student_id", record.studentId)
+            put("local_date", record.localDate)
+            put("question_id", record.questionId)
+            put("strand", record.strand)
+            put("difficulty_band", record.difficultyBand)
+            put("completed", if (record.completed) 1 else 0)
+            put("is_correct", if (record.isCorrect) 1 else 0)
+            put("bonus_points", record.bonusPoints)
+            if (record.completedAtMs != null) {
+                put("completed_at_ms", record.completedAtMs)
+            } else {
+                putNull("completed_at_ms")
+            }
+        }
+        writableDatabase.insertWithOnConflict("daily_challenges", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    fun getDailyChallengesForStudent(studentId: String): List<DailyChallengeRecord> {
+        val result = mutableListOf<DailyChallengeRecord>()
+        readableDatabase.rawQuery(
+            """
+            SELECT id, student_id, local_date, question_id, strand, difficulty_band,
+                   completed, is_correct, bonus_points, completed_at_ms
+            FROM daily_challenges
+            WHERE student_id = ?
+            ORDER BY local_date DESC
+            """.trimIndent(),
+            arrayOf(studentId),
+        ).use { c ->
+            while (c.moveToNext()) {
+                result += DailyChallengeRecord(
+                    id = c.getString(0),
+                    studentId = c.getString(1),
+                    localDate = c.getString(2),
+                    questionId = c.getString(3),
+                    strand = c.getString(4),
+                    difficultyBand = c.getInt(5),
+                    completed = c.getInt(6) == 1,
+                    isCorrect = c.getInt(7) == 1,
+                    bonusPoints = c.getInt(8),
+                    completedAtMs = if (c.isNull(9)) null else c.getLong(9),
+                )
+            }
+        }
+        return result
+    }
+
     companion object {
         private const val DB_NAME = "puzzle_quest.db"
-        private const val DB_VERSION = 1
+        private const val DB_VERSION = 2
     }
 }

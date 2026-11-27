@@ -207,4 +207,72 @@ object InsightsEngine {
             rows = (layersMap.values.maxOfOrNull { it.size } ?: 1).coerceAtLeast(1),
         )
     }
+
+    /**
+     * Multi-category progress over time across daily (e.g. 14 days) or weekly (e.g. 8 weeks) buckets.
+     * Groups each attempt by its question's primary skill strand.
+     */
+    fun categoryProgressOverTime(
+        attempts: List<InsightAttempt>,
+        questionsById: Map<String, Question>,
+        skills: List<Skill>,
+        today: LocalDateString,
+        weekly: Boolean = false,
+        bucketCount: Int = if (weekly) 8 else 14,
+    ): CategoryProgressOverTime {
+        val strandOf = skills.associate { it.code to it.strand }
+        val buckets = List(bucketCount) { i ->
+            if (weekly) {
+                val w = bucketCount - 1 - i
+                val end = Dates.addDays(today, -7 * w)
+                val start = Dates.addDays(end, -6)
+                CategoryProgressBucket(
+                    label = Dates.shortLabel(end),
+                    startDate = start,
+                    endDate = end,
+                )
+            } else {
+                val date = Dates.addDays(today, i - (bucketCount - 1))
+                CategoryProgressBucket(
+                    label = Dates.shortLabel(date),
+                    startDate = date,
+                    endDate = date,
+                )
+            }
+        }
+
+        val tagged = attempts.mapNotNull { a ->
+            val q = questionsById[a.questionId] ?: return@mapNotNull null
+            val strand = strandOf[q.skills.firstOrNull()] ?: return@mapNotNull null
+            strand to a
+        }
+
+        val series = StrandLabels.orderedStrands.map { strand ->
+            val strandAttempts = tagged.filter { it.first == strand }.map { it.second }
+            val tallies = buckets.map { b ->
+                val inBucket = strandAttempts.filter { it.localDate >= b.startDate && it.localDate <= b.endDate }
+                tally(inBucket)
+            }
+            CategorySeries(strand = strand, tallies = tallies)
+        }
+
+        return CategoryProgressOverTime(buckets = buckets, series = series)
+    }
 }
+
+data class CategoryProgressBucket(
+    val label: String,
+    val startDate: LocalDateString,
+    val endDate: LocalDateString,
+)
+
+data class CategorySeries(
+    val strand: String,
+    val tallies: List<Tally>,
+)
+
+data class CategoryProgressOverTime(
+    val buckets: List<CategoryProgressBucket>,
+    val series: List<CategorySeries>,
+)
+

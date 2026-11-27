@@ -1,7 +1,9 @@
 package com.puzzlequest.app
 
+import android.graphics.Color as AndroidColor
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
@@ -29,7 +31,6 @@ import com.puzzlequest.app.data.content.ContentBank
 import com.puzzlequest.app.data.repository.LearnerRepository
 import com.puzzlequest.app.engine.TtsController
 import com.puzzlequest.app.ui.screens.ChooseThemeScreen
-import com.puzzlequest.app.ui.screens.HomeScreen
 import com.puzzlequest.app.ui.screens.ParentScreen
 import com.puzzlequest.app.ui.screens.PlayerScreen
 import com.puzzlequest.app.ui.screens.PlayerViewModel
@@ -43,10 +44,12 @@ import kotlinx.serialization.Serializable
 data object HomeRoute
 
 @Serializable
-data class ChooseRoute(val studentId: String)
-
-@Serializable
-data class PlayRoute(val studentId: String, val themeId: String? = null)
+data class PlayRoute(
+    val studentId: String,
+    val themeId: String? = null,
+    val categoryKey: String? = null,
+    val isDailyChallenge: Boolean = false,
+)
 
 @Serializable
 data object ParentRoute
@@ -57,7 +60,10 @@ data class ReportRoute(val studentId: String)
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
+        )
         setContent {
             PuzzleQuestTheme {
                 PuzzleQuestApp()
@@ -84,6 +90,8 @@ private fun PuzzleQuestApp() {
     }
 
     val students by repository.students.collectAsStateWithLifecycle()
+    var activeStudentId by remember { mutableStateOf<String?>(null) }
+    val activeStudent = students.firstOrNull { it.id == activeStudentId } ?: students.firstOrNull()
     val navController = rememberNavController()
 
     NavHost(
@@ -91,37 +99,33 @@ private fun PuzzleQuestApp() {
         startDestination = HomeRoute,
     ) {
         composable<HomeRoute> {
-            HomeScreen(
-                students = students,
-                isLoadingContent = contentBank == null,
-                onSelectStudent = { studentId ->
-                    navController.navigate(ChooseRoute(studentId))
-                },
-                onOpenParent = {
-                    navController.navigate(ParentRoute)
-                },
-            )
-        }
-
-        composable<ChooseRoute> { backStackEntry ->
-            val route = backStackEntry.toRoute<ChooseRoute>()
             val bank = contentBank
-            val student = students.firstOrNull { it.id == route.studentId }
+            val student = activeStudent
             if (bank == null || student == null) {
                 LoadingBackdrop()
             } else {
                 ChooseThemeScreen(
                     student = student,
-                    themes = remember(bank) { bank.playableThemes() },
-                    skillsByCode = bank.skillsByCode,
+                    students = students,
+                    contentBank = bank,
+                    repository = repository,
+                    onSelectStudent = { selectedId ->
+                        activeStudentId = selectedId
+                    },
+                    onOpenParent = {
+                        navController.navigate(ParentRoute)
+                    },
+                    onStartDailyChallenge = {
+                        navController.navigate(PlayRoute(studentId = student.id, isDailyChallenge = true))
+                    },
                     onStartDaily = {
-                        navController.navigate(PlayRoute(studentId = student.id, themeId = null))
+                        navController.navigate(PlayRoute(studentId = student.id))
                     },
                     onStartTheme = { themeId ->
                         navController.navigate(PlayRoute(studentId = student.id, themeId = themeId))
                     },
-                    onBackToPlayers = {
-                        navController.popBackStack(HomeRoute, inclusive = false)
+                    onStartCategory = { categoryKey ->
+                        navController.navigate(PlayRoute(studentId = student.id, categoryKey = categoryKey))
                     },
                 )
             }
@@ -133,14 +137,22 @@ private fun PuzzleQuestApp() {
             if (bank == null) {
                 LoadingBackdrop()
             } else {
+                val modeKey = when {
+                    route.isDailyChallenge -> "daily_challenge"
+                    route.themeId != null -> "theme_${route.themeId}"
+                    route.categoryKey != null -> "cat_${route.categoryKey}"
+                    else -> "daily"
+                }
                 val playerViewModel: PlayerViewModel = viewModel(
-                    key = "player_${route.studentId}_${route.themeId ?: "daily"}",
+                    key = "player_${route.studentId}_$modeKey",
                     factory = object : ViewModelProvider.Factory {
                         @Suppress("UNCHECKED_CAST")
                         override fun <T : ViewModel> create(modelClass: Class<T>): T {
                             return PlayerViewModel(
                                 studentId = route.studentId,
                                 themeId = route.themeId,
+                                categoryKey = route.categoryKey,
+                                isDailyChallenge = route.isDailyChallenge,
                                 contentBank = bank,
                                 repository = repository,
                                 tts = tts,
@@ -151,7 +163,7 @@ private fun PuzzleQuestApp() {
                 PlayerScreen(
                     viewModel = playerViewModel,
                     onLeave = {
-                        navController.popBackStack(HomeRoute, inclusive = false)
+                        navController.popBackStack()
                     },
                 )
             }

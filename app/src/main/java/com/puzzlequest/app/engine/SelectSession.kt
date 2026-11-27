@@ -14,6 +14,7 @@ data class SessionPlan(
 data class SessionOptions(
     val themeSkills: Set<String>? = null,
     val onlySkills: Set<String>? = null,
+    val pureCategory: Boolean = false,
 )
 
 object SessionSelector {
@@ -261,8 +262,12 @@ object SessionSelector {
         val newSkillQuota = if (introducing) MIN_NEW_ITEMS else 0
         if (onlySkills != null) {
             fun inTheme(c: Candidate) = c.question.skills.any { it in onlySkills }
-            fill(byScore.filter { !inTheme(it) && !isThemed(it) }, minOf(THEMED_CORE_ITEMS, size), Quotas(1, 0, 0))
-            fill(byScore.filter(::inTheme), size, Quotas(0, newSkillQuota, 0))
+            if (options.pureCategory) {
+                fill(byScore.filter(::inTheme), size, Quotas(0, newSkillQuota, 0))
+            } else {
+                fill(byScore.filter { !inTheme(it) && !isThemed(it) }, minOf(THEMED_CORE_ITEMS, size), Quotas(1, 0, 0))
+                fill(byScore.filter(::inTheme), size, Quotas(0, newSkillQuota, 0))
+            }
         } else {
             fill(
                 byScore,
