@@ -43,7 +43,7 @@ jobs:
           fi
       - name: Run unit tests
         if: inputs.signed_blob == ''
-        run: gradle :app:testReleaseUnitTest
+        run: gradle :app:testDebugUnitTest
       - name: Build release
         if: inputs.signed_blob == ''
         env:
