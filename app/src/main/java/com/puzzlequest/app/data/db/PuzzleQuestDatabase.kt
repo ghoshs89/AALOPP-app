@@ -225,7 +225,7 @@ class PuzzleQuestDatabase(context: Context) :
             put("scratchpad", attempt.scratchpad)
             if (attempt.scratchpadStrokes != null) put("scratchpad_strokes", attempt.scratchpadStrokes)
         }
-        writableDatabase.insertWithOnConflict("attempts", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+        check(writableDatabase.replaceOrThrow("attempts", null, cv) != -1L)
     }
 
     fun getAttemptsForStudent(studentId: String): List<AttemptEntity> {
@@ -328,7 +328,7 @@ class PuzzleQuestDatabase(context: Context) :
                 putNull("completed_at_ms")
             }
         }
-        writableDatabase.insertWithOnConflict("daily_challenges", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+        check(writableDatabase.replaceOrThrow("daily_challenges", null, cv) != -1L)
     }
 
     fun getDailyChallengesForStudent(studentId: String): List<DailyChallengeRecord> {

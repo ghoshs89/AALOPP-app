@@ -42,3 +42,12 @@ next-env.d.ts
 
 # prisma client
 /src/generated/
+
+# Android local state and signing material
+.gradle/
+.kotlin/
+**/build/
+local.properties
+*.keystore
+*.jks
+*.p12

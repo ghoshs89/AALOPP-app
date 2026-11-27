@@ -4,6 +4,10 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+val releaseVersion = rootProject.file("version.txt").readText().trim()
+val (major, minor, patch) = releaseVersion.split('.').map(String::toInt)
+require(major in 0..200000 && minor in 0..99 && patch in 0..99)
+
 android {
     namespace = "com.puzzlequest.app"
     compileSdk = 36
@@ -12,16 +16,18 @@ android {
         applicationId = "com.puzzlequest.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = major * 10000 + minor * 100 + patch
+        versionName = releaseVersion
     }
 
     signingConfigs {
-        create("debugConfig") {
-            storeFile = file("${rootDir}/debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+        System.getenv("PUZZLE_KEYSTORE")?.let { path ->
+            create("publisher") {
+                storeFile = file(path)
+                storePassword = System.getenv("PUZZLE_KEY_PASSWORD")
+                keyAlias = "puzzlequest"
+                keyPassword = storePassword
+            }
         }
     }
 
@@ -32,10 +38,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("debugConfig")
-        }
-        debug {
-            signingConfig = signingConfigs.getByName("debugConfig")
+            signingConfig = signingConfigs.findByName("publisher")
         }
     }
 

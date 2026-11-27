@@ -15,3 +15,16 @@ Adaptive learning and cognitive reasoning practice app built with Kotlin and Jet
 - Local SQLite persistence (`PuzzleQuestDatabase`)
 - Kotlinx Serialization JSON, Coil SVG + AndroidSVG, Android TextToSpeech & SpeechRecognizer
 - Bundled Google Fonts (`Baloo 2`, `Nunito`)
+
+## Install and update
+
+Install the signed APK from [GitHub Releases](https://github.com/ghoshs89/AALOPP-app/releases/latest). On Android 8 or later, open **Grown-ups** to check for updates. When a newer stable release is available, choose **Install update**. Android may ask you to allow installations from Puzzle Quest. Return to the app and confirm the installation in Android’s installer. Installing over the existing app keeps its local profiles, answers and notes.
+
+Practice works offline. The update check contacts GitHub for release metadata and sends no learner records. The app verifies the APK digest, package name, version code and signing certificate before opening the installer.
+
+## Publish a release
+
+1. Set `version.txt` to a higher `MAJOR.MINOR.PATCH` version (minor and patch each 0–99). Commit it and tag that commit with the matching `v` prefix.
+2. GitHub Actions builds with JDK 21, Gradle 9.3.1, SDK 36 and Build Tools 36.0.0. To publish from a tag automatically, configure repository secrets `PUZZLE_KEYSTORE_BASE64` (the original publisher PKCS12 file, base64 encoded) and `PUZZLE_KEY_PASSWORD`. The signing alias is `puzzlequest`. Keep a private offline backup of both files.
+3. For local signing, export `PUZZLE_KEYSTORE` as the absolute keystore path and `PUZZLE_KEY_PASSWORD` from private storage. Run `gradle :app:assembleRelease`. With `ANDROID_HOME` set, run `scripts/verify-release.sh app/build/outputs/apk/release/app-release.apk vX.Y.Z`, substituting the tag. Publish the verified file as `PuzzleQuest-vX.Y.Z.apk` on a stable GitHub Release for that tag. The updater uses the SHA-256 digest supplied by GitHub.
+4. Workflows without signing secrets produce a build artifact for offline signing. Only APKs that pass the pinned certificate and version checks are eligible for publication. Never regenerate the publisher key for an update.

@@ -1,7 +1,9 @@
 package com.puzzlequest.app
 
 import android.graphics.Color as AndroidColor
+import android.app.Application
 import android.os.Bundle
+import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -10,7 +12,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import kotlinx.coroutines.delay
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -72,16 +77,32 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+class AppServices(application: Application) : AndroidViewModel(application) {
+    val repository = LearnerRepository(application)
+    val tts = TtsController(application)
+    override fun onCleared() {
+        tts.shutdown()
+    }
+}
+
 @Composable
 private fun PuzzleQuestApp() {
     val context = LocalContext.current
-    val repository = remember { LearnerRepository(context) }
-    val tts = remember { TtsController(context) }
+    val services: AppServices = viewModel()
+    val repository = services.repository
+    val tts = services.tts
     var contentBank by remember { mutableStateOf<ContentBank?>(null) }
-    var parentUnlocked by remember { mutableStateOf(false) }
-
-    DisposableEffect(Unit) {
-        onDispose { tts.shutdown() }
+    var parentDeadline by remember { mutableLongStateOf(0L) }
+    val parentUnlocked = parentDeadline > SystemClock.elapsedRealtime()
+    LaunchedEffect(parentDeadline) {
+        if (parentDeadline > 0L) {
+            delay((parentDeadline - SystemClock.elapsedRealtime()).coerceAtLeast(0))
+            parentDeadline = 0L
+        }
+    }
+    LifecycleResumeEffect(Unit) {
+        if (parentDeadline <= SystemClock.elapsedRealtime()) parentDeadline = 0L
+        onPauseOrDispose { }
     }
 
     LaunchedEffect(Unit) {
@@ -113,6 +134,7 @@ private fun PuzzleQuestApp() {
                         activeStudentId = selectedId
                     },
                     onOpenParent = {
+                        parentDeadline = 0L
                         navController.navigate(ParentRoute)
                     },
                     onStartDailyChallenge = {
@@ -177,12 +199,15 @@ private fun PuzzleQuestApp() {
                 ParentScreen(
                     contentBank = bank,
                     repository = repository,
-                    initiallyUnlocked = parentUnlocked,
-                    onUnlockStateChange = { parentUnlocked = it },
+                    unlocked = parentUnlocked,
+                    onUnlockStateChange = { unlocked ->
+                        parentDeadline = if (unlocked) SystemClock.elapsedRealtime() + 30 * 60_000L else 0L
+                    },
                     onOpenReport = { studentId ->
                         navController.navigate(ReportRoute(studentId))
                     },
                     onBack = {
+                        parentDeadline = 0L
                         navController.popBackStack(HomeRoute, inclusive = false)
                     },
                 )
@@ -194,6 +219,12 @@ private fun PuzzleQuestApp() {
             val bank = contentBank
             if (bank == null) {
                 LoadingBackdrop()
+            } else if (!parentUnlocked) {
+                LaunchedEffect(Unit) {
+                    if (!navController.popBackStack(ParentRoute, inclusive = false)) {
+                        navController.navigate(ParentRoute) { popUpTo(HomeRoute) }
+                    }
+                }
             } else {
                 ReportScreen(
                     studentId = route.studentId,

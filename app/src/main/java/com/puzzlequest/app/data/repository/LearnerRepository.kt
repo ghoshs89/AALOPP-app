@@ -1,6 +1,9 @@
 package com.puzzlequest.app.data.repository
 
 import android.content.Context
+import androidx.core.database.sqlite.transaction
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.update
 import com.puzzlequest.app.data.db.AttemptEntity
 import com.puzzlequest.app.data.db.DailyChallengeRecord
 import com.puzzlequest.app.data.db.ParentNoteRecord
@@ -40,11 +43,14 @@ class LearnerRepository(context: Context) {
         db.getAttemptsForStudent(studentId)
     }
 
-    suspend fun recordAttempt(attempt: AttemptEntity, sessionStartedAtMs: Long) {
-        withContext(Dispatchers.IO) {
-            db.insertAttempt(attempt, sessionStartedAtMs)
+    suspend fun recordAttempt(attempt: AttemptEntity, sessionStartedAtMs: Long, daily: DailyChallengeRecord?) {
+        withContext(Dispatchers.IO + NonCancellable) {
+            db.writableDatabase.transaction {
+                db.insertAttempt(attempt, sessionStartedAtMs)
+                if (daily != null) db.upsertDailyChallenge(daily)
+            }
+            _dataVersion.update { it + 1 }
         }
-        _dataVersion.value += 1
     }
 
     suspend fun endSession(sessionId: String, studentId: String, startedAtMs: Long, endedAtMs: Long) {
@@ -72,19 +78,12 @@ class LearnerRepository(context: Context) {
         db.getDailyChallengesForStudent(studentId)
     }
 
-    suspend fun recordDailyChallenge(record: DailyChallengeRecord) {
-        withContext(Dispatchers.IO) { db.upsertDailyChallenge(record) }
-        _dataVersion.value += 1
-    }
-
     fun setVoiceOn(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_VOICE_ON, enabled).apply()
         _voiceOn.value = enabled
     }
 
     fun getParentPin(): String = prefs.getString(KEY_PARENT_PIN, DEFAULT_PIN) ?: DEFAULT_PIN
-
-    fun isUsingDefaultPin(): Boolean = getParentPin() == DEFAULT_PIN
 
     fun setParentPin(newPin: String) {
         val clean = newPin.filter { it.isDigit() }.take(8)

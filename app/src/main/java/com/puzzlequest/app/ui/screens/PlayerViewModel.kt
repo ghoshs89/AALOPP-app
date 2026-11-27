@@ -28,6 +28,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import java.util.UUID
 
 enum class PlayerPhase { LOADING, READY, LEARNING, ANSWERING, FEEDBACK, DONE }
@@ -46,6 +49,8 @@ data class PlayerUiState(
     val digits: String = "",
     val placedOrder: List<String> = emptyList(),
     val showHint: Boolean = false,
+    val saving: Boolean = false,
+    val saveError: Boolean = false,
     val result: FeedbackResult? = null,
     val showExplanation: Boolean = false,
     val offerBreak: Boolean = false,
@@ -387,6 +392,7 @@ class PlayerViewModel(
 
     fun submitAnswer() {
         val state = _uiState.value
+        if (state.phase != PlayerPhase.ANSWERING || state.saving) return
         val q = state.currentQuestion ?: return
         val resp = state.currentResponse ?: return
         tts.stop()
@@ -402,10 +408,6 @@ class PlayerViewModel(
         val foundWithNudge = q.answer is Answer.FindTheBug &&
             resp is PlayerResponse.Step &&
             resp.secondIndex == q.answer.bugIndex
-
-        sessionResults += (correct || foundWithNudge)
-        val shouldBreak = state.index + 1 < state.questions.size && shouldSuggestBreak(sessionResults, breakSuggested)
-        if (shouldBreak) breakSuggested = true
 
         val totalMs = (SystemClock.elapsedRealtime() - questionShownClockMs).toInt().coerceAtLeast(0)
         val scratchMode = when {
@@ -423,87 +425,96 @@ class PlayerViewModel(
         var newPoints = state.totalProgressPoints + if (correct) DailyChallengeEngine.REGULAR_CORRECT_POINTS else 0
         var newStreak = state.dailyStreak
 
-        state.student?.let { st ->
-            val attempt = AttemptEntity(
-                id = UUID.randomUUID().toString(),
-                studentId = st.id,
-                sessionId = sessionId,
-                questionId = q.id,
-                responseJson = Grading.encodeResponse(resp),
-                isCorrect = correct,
-                confidence = null,
-                firstActionMs = firstActionMs,
-                totalMs = totalMs,
-                listenCount = listenCount,
-                answeredAtMs = nowMs,
-                localDate = today,
-                selectionReason = reasons[q.id]?.take(200),
-                scratchpad = scratchMode,
-                scratchpadStrokes = state.scratchStrokes,
-            )
+        val st = state.student ?: return
+        val attempt = AttemptEntity(
+            id = "$sessionId:${q.id}",
+            studentId = st.id,
+            sessionId = sessionId,
+            questionId = q.id,
+            responseJson = Grading.encodeResponse(resp),
+            isCorrect = correct,
+            confidence = null,
+            firstActionMs = firstActionMs,
+            totalMs = totalMs,
+            listenCount = listenCount,
+            answeredAtMs = nowMs,
+            localDate = today,
+            selectionReason = reasons[q.id]?.take(200),
+            scratchpad = scratchMode,
+            scratchpadStrokes = state.scratchStrokes,
+        )
 
-            val dailyPlan = state.dailyChallengePlan
-            var newChallengeRecord: DailyChallengeRecord? = null
-            if (state.isDailyChallenge && dailyPlan != null) {
-                val alreadyCompleted = dailyPlan.isCompletedToday
-                val bonus = when {
-                    alreadyCompleted -> 0
-                    celebrate -> dailyPlan.bonusPoints
-                    else -> DailyChallengeEngine.DAILY_EFFORT_BONUS_POINTS
-                }
-                awardedBonus = bonus
-                if (!alreadyCompleted) {
-                    val record = DailyChallengeRecord(
-                        id = "${st.id}_${dailyPlan.localDate}",
-                        studentId = st.id,
-                        localDate = dailyPlan.localDate,
-                        questionId = dailyPlan.question.id,
-                        strand = dailyPlan.strand,
-                        difficultyBand = dailyPlan.targetBand,
-                        completed = true,
-                        isCorrect = celebrate,
-                        bonusPoints = bonus,
-                        completedAtMs = nowMs,
-                    )
-                    newChallengeRecord = record
-                    updatedDailyPlan = dailyPlan.copy(completedRecord = record)
-                    newPoints += bonus
-                    newStreak += 1
-                }
+        val dailyPlan = state.dailyChallengePlan
+        var newChallengeRecord: DailyChallengeRecord? = null
+        if (state.isDailyChallenge && dailyPlan != null) {
+            val alreadyCompleted = dailyPlan.isCompletedToday
+            val bonus = when {
+                alreadyCompleted -> 0
+                celebrate -> dailyPlan.bonusPoints
+                else -> DailyChallengeEngine.DAILY_EFFORT_BONUS_POINTS
             }
-
-            viewModelScope.launch {
-                repository.recordAttempt(attempt, sessionStartedAtMs)
-                if (newChallengeRecord != null) {
-                    repository.recordDailyChallenge(newChallengeRecord)
-                }
+            awardedBonus = bonus
+            if (!alreadyCompleted) {
+                val record = DailyChallengeRecord(
+                    id = "${st.id}_${dailyPlan.localDate}",
+                    studentId = st.id,
+                    localDate = dailyPlan.localDate,
+                    questionId = dailyPlan.question.id,
+                    strand = dailyPlan.strand,
+                    difficultyBand = dailyPlan.targetBand,
+                    completed = true,
+                    isCorrect = celebrate,
+                    bonusPoints = bonus,
+                    completedAtMs = nowMs,
+                )
+                newChallengeRecord = record
+                updatedDailyPlan = dailyPlan.copy(completedRecord = record)
+                newPoints += bonus
+                newStreak += 1
             }
         }
 
-        _uiState.update {
-            it.copy(
-                phase = PlayerPhase.FEEDBACK,
-                result = FeedbackResult(correct = correct, foundWithNudge = foundWithNudge),
-                showExplanation = !correct && !foundWithNudge,
-                offerBreak = shouldBreak,
-                confettiBurstId = if (celebrate) it.confettiBurstId + 1 else it.confettiBurstId,
-                confettiIntensity = when {
-                    celebrate && it.isDailyChallenge -> ConfettiIntensity.SESSION_DONE
-                    celebrate -> ConfettiIntensity.PUZZLE
-                    else -> it.confettiIntensity
-                },
-                dailyChallengePlan = updatedDailyPlan,
-                dailyBonusAwarded = awardedBonus,
-                totalProgressPoints = newPoints,
-                dailyStreak = newStreak,
-            )
-        }
+        _uiState.update { it.copy(saving = true, saveError = false) }
+        viewModelScope.launch {
+            try {
+                repository.recordAttempt(attempt, sessionStartedAtMs, newChallengeRecord)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.e("PuzzleQuest", "Could not save attempt", e)
+                _uiState.update { it.copy(saving = false, saveError = true) }
+                return@launch
+            }
+            sessionResults += (correct || foundWithNudge)
+            val shouldBreak = state.index + 1 < state.questions.size && shouldSuggestBreak(sessionResults, breakSuggested)
+            if (shouldBreak) breakSuggested = true
 
-        val dyk = q.didYouKnow?.let { " Did you know? ${SpeechFormatter.speakable(it)}" }.orEmpty()
-        when {
-            correct -> autoSpeakText("You got it! Nice careful thinking.$dyk")
-            foundWithNudge -> autoSpeakText("$FOUND_WITH_NUDGE$dyk")
-            else -> autoSpeakText("Let's check it together. ${SpeechFormatter.speakable(q.explanation)}$dyk")
+            _uiState.update {
+                it.copy(
+                    phase = PlayerPhase.FEEDBACK,
+                    saving = false,
+                    result = FeedbackResult(correct = correct, foundWithNudge = foundWithNudge),
+                    showExplanation = !correct && !foundWithNudge,
+                    offerBreak = shouldBreak,
+                    confettiBurstId = if (celebrate) it.confettiBurstId + 1 else it.confettiBurstId,
+                    confettiIntensity = when {
+                        celebrate && it.isDailyChallenge -> ConfettiIntensity.SESSION_DONE
+                        celebrate -> ConfettiIntensity.PUZZLE
+                        else -> it.confettiIntensity
+                    },
+                    dailyChallengePlan = updatedDailyPlan,
+                    dailyBonusAwarded = awardedBonus,
+                    totalProgressPoints = newPoints,
+                    dailyStreak = newStreak,
+                )
+            }
+
+            val dyk = q.didYouKnow?.let { " Did you know? ${SpeechFormatter.speakable(it)}" }.orEmpty()
+            when {
+                correct -> autoSpeakText("You got it! Nice careful thinking.$dyk")
+                foundWithNudge -> autoSpeakText("$FOUND_WITH_NUDGE$dyk")
+                else -> autoSpeakText("Let's check it together. ${SpeechFormatter.speakable(q.explanation)}$dyk")
+            }
         }
     }
 
@@ -545,8 +556,14 @@ class PlayerViewModel(
         sessionActive = false
         val st = _uiState.value.student ?: return
         val endMs = System.currentTimeMillis()
-        viewModelScope.launch {
-            repository.endSession(sessionId, st.id, sessionStartedAtMs, endMs)
+        val id = sessionId
+        val startedAt = sessionStartedAtMs
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                repository.endSession(id, st.id, startedAt, endMs)
+            } catch (e: android.database.SQLException) {
+                android.util.Log.e("PuzzleQuest", "Could not close practice session", e)
+            }
         }
     }
 

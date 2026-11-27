@@ -39,6 +39,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -87,6 +88,7 @@ fun PlayerScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    BackHandler(enabled = state.saving) { }
     val haptic = LocalHapticFeedback.current
     var isListening by remember { mutableStateOf(false) }
 
@@ -202,7 +204,7 @@ fun PlayerScreen(
                         .size(48.dp)
                         .clip(RoundedCornerShape(14.dp))
                         .background(QuestColors.BgMid)
-                        .clickable {
+                        .clickable(enabled = !state.saving) {
                             viewModel.markSessionEnded()
                             onLeave()
                         }
@@ -507,28 +509,33 @@ fun PlayerScreen(
 
                     PlayerPhase.ANSWERING, PlayerPhase.FEEDBACK -> {
                         val question = state.currentQuestion ?: return@Column
-                        QuestionContent(
-                            question = question,
-                            state = state,
-                            isListening = isListening,
-                            recognizerAvailable = recognizerAvailable,
-                            onReadAloud = { viewModel.readQuestionAloud() },
-                            onHearForeign = { viewModel.hearForeignPrompt() },
-                            onToggleScratchpad = { viewModel.toggleScratchpad() },
-                            onTogglePaper = { viewModel.toggleUsingPaper() },
-                            onScratchStrokesChanged = { viewModel.updateScratchStrokes(it) },
-                            onRevealHint = { viewModel.revealHint() },
-                            onVoiceAnswer = { requestVoiceAnswer(question.language) },
-                            onSelectChoice = { viewModel.selectChoice(it) },
-                            onDigitKey = { viewModel.onDigitKey(it) },
-                            onPlaceOrder = { viewModel.placeOrderItem(it) },
-                            onRemoveOrder = { viewModel.removeOrderAt(it) },
-                            onClearOrder = { viewModel.clearOrder() },
-                            onSubmit = { viewModel.submitAnswer() },
-                            onRevealExplanation = { viewModel.revealExplanation() },
-                            onNext = { viewModel.nextQuestion() },
-                            onTakeBreak = { viewModel.finishSession() },
-                        )
+                        if (state.saving) {
+                            Text("Saving your answer…", color = QuestColors.Cream)
+                        } else {
+                            if (state.saveError) Text("Your answer could not be saved. Tap Check answer to retry.", color = QuestColors.Cream)
+                            QuestionContent(
+                                question = question,
+                                state = state,
+                                isListening = isListening,
+                                recognizerAvailable = recognizerAvailable,
+                                onReadAloud = { viewModel.readQuestionAloud() },
+                                onHearForeign = { viewModel.hearForeignPrompt() },
+                                onToggleScratchpad = { viewModel.toggleScratchpad() },
+                                onTogglePaper = { viewModel.toggleUsingPaper() },
+                                onScratchStrokesChanged = { viewModel.updateScratchStrokes(it) },
+                                onRevealHint = { viewModel.revealHint() },
+                                onVoiceAnswer = { requestVoiceAnswer(question.language) },
+                                onSelectChoice = { viewModel.selectChoice(it) },
+                                onDigitKey = { viewModel.onDigitKey(it) },
+                                onPlaceOrder = { viewModel.placeOrderItem(it) },
+                                onRemoveOrder = { viewModel.removeOrderAt(it) },
+                                onClearOrder = { viewModel.clearOrder() },
+                                onSubmit = { viewModel.submitAnswer() },
+                                onRevealExplanation = { viewModel.revealExplanation() },
+                                onNext = { viewModel.nextQuestion() },
+                                onTakeBreak = { viewModel.finishSession() },
+                            )
+                        }
                     }
                 }
             }

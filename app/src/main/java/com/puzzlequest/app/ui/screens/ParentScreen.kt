@@ -65,6 +65,7 @@ import com.puzzlequest.app.engine.AttemptRecord
 import com.puzzlequest.app.engine.DailyChallengeEngine
 import com.puzzlequest.app.engine.Dates
 import com.puzzlequest.app.engine.InsightAttempt
+import com.puzzlequest.app.engine.Grading
 import com.puzzlequest.app.engine.InsightsEngine
 import com.puzzlequest.app.engine.SessionSelector
 import com.puzzlequest.app.engine.SkillStateEngine
@@ -97,7 +98,7 @@ private enum class ParentTab(val label: String) {
 fun ParentScreen(
     contentBank: ContentBank,
     repository: LearnerRepository,
-    initiallyUnlocked: Boolean,
+    unlocked: Boolean,
     onUnlockStateChange: (Boolean) -> Unit,
     onOpenReport: (String) -> Unit,
     onBack: () -> Unit,
@@ -106,7 +107,6 @@ fun ParentScreen(
     val dataVersion by repository.dataVersion.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
-    var unlocked by remember { mutableStateOf(initiallyUnlocked) }
     var pinInput by remember { mutableStateOf("") }
     var wrongPin by remember { mutableStateOf(false) }
     var wrongTries by remember { mutableIntStateOf(0) }
@@ -156,14 +156,6 @@ fun ParentScreen(
                         .fillMaxWidth()
                         .testTag("parent_pin_input"),
                 )
-                if (repository.isUsingDefaultPin()) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = "Default PIN: ${LearnerRepository.DEFAULT_PIN} (can be changed inside)",
-                        color = QuestColors.CreamDim,
-                        fontSize = 13.sp,
-                    )
-                }
                 if (isLockedOut) {
                     Spacer(Modifier.height(8.dp))
                     Text(text = stringResource(R.string.pin_locked), color = QuestColors.Danger, fontSize = 15.sp)
@@ -176,7 +168,6 @@ fun ParentScreen(
                     onClick = {
                         if (System.currentTimeMillis() < lockedUntilMs) return@Button
                         if (pinInput == repository.getParentPin()) {
-                            unlocked = true
                             onUnlockStateChange(true)
                             pinInput = ""
                             wrongPin = false
@@ -291,6 +282,8 @@ fun ParentScreen(
                 }
             }
 
+            AppUpdateCard()
+
             // Action chips
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -324,7 +317,6 @@ fun ParentScreen(
                 }
                 Button(
                     onClick = {
-                        unlocked = false
                         onUnlockStateChange(false)
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = QuestColors.BgMid, contentColor = QuestColors.Cream),
@@ -556,7 +548,8 @@ fun ParentScreen(
                         } else {
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 recent.forEach { a ->
-                                    val prompt = contentBank.questionsById[a.questionId]?.prompt ?: a.questionId
+                                    val question = contentBank.questionsById[a.questionId]
+                                    val prompt = question?.prompt ?: a.questionId
                                     val tools = buildString {
                                         append("${(a.totalMs / 1000.0).toInt()}s")
                                         if (a.listenCount > 0) append(" · 🔊${a.listenCount}")
@@ -595,6 +588,10 @@ fun ParentScreen(
                                             color = QuestColors.Cream,
                                             fontSize = 15.sp,
                                             fontWeight = FontWeight.SemiBold,
+                                        )
+                                        Text(
+                                            text = "Answer: " + Grading.describeResponse(a.responseJson, question),
+                                            color = QuestColors.Cream,
                                         )
                                         Text(
                                             text = a.selectionReason ?: "Adaptive practice",

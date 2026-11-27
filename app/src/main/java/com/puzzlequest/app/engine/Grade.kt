@@ -31,6 +31,22 @@ object Grading {
 
     fun encodeResponse(response: PlayerResponse): String = json.encodeToString(response)
 
+    fun describeResponse(encoded: String, question: Question?): String {
+        val response = try {
+            json.decodeFromString<PlayerResponse>(encoded)
+        } catch (_: IllegalArgumentException) {
+            return "Answer unavailable"
+        }
+        return when (response) {
+            is PlayerResponse.Choice -> response.value
+                ?: (question?.answer as? Answer.Choice)?.choices?.getOrNull(response.index)
+                ?: "Choice ${response.index + 1}"
+            is PlayerResponse.Numeric -> listOfNotNull(formatNumeric(response.value), (question?.answer as? Answer.Numeric)?.unit).joinToString(" ")
+            is PlayerResponse.Order -> response.order.joinToString(" → ")
+            is PlayerResponse.Step -> listOfNotNull(response.index, response.secondIndex).joinToString(" → ") { "Step ${it + 1}" }
+        }
+    }
+
     fun isCorrect(question: Question, response: PlayerResponse): Boolean {
         return when (val answer = question.answer) {
             is Answer.Choice -> {
