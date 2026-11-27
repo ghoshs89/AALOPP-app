@@ -22,6 +22,10 @@ Install the signed APK from [GitHub Releases](https://github.com/ghoshs89/AALOPP
 
 Practice works offline. The update check contacts GitHub for release metadata and sends no learner records. The app verifies the APK digest, package name, version code and signing certificate before opening the installer.
 
+## Bring over web practice history
+
+On the [Puzzle Quest website](https://aalopp.vercel.app/parent), sign in, unlock **Grown-ups**, and choose **Export practice history**. On Android, open **Grown-ups**, select the learner, and choose **Import practice history**. Select the downloaded JSON file and confirm the destination profile. The app keeps existing Android answers and skips previously imported web answers. The file contains private learner history.
+
 ## Publish a release
 
 1. Set `version.txt` to a higher `MAJOR.MINOR.PATCH` version (minor and patch each 0–99). Commit it and tag that commit with the matching `v` prefix.

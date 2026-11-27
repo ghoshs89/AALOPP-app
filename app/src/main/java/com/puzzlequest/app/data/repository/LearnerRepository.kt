@@ -9,6 +9,8 @@ import com.puzzlequest.app.data.db.DailyChallengeRecord
 import com.puzzlequest.app.data.db.ParentNoteRecord
 import com.puzzlequest.app.data.db.PuzzleQuestDatabase
 import com.puzzlequest.app.data.db.StudentRecord
+import com.puzzlequest.app.data.history.HistoryImportResult
+import com.puzzlequest.app.data.history.PracticeHistory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -52,6 +54,13 @@ class LearnerRepository(context: Context) {
             _dataVersion.update { it + 1 }
         }
     }
+
+    suspend fun importPracticeHistory(studentId: String, history: PracticeHistory): HistoryImportResult =
+        withContext(Dispatchers.IO) {
+            db.importPracticeHistory(studentId, history).also {
+                _dataVersion.update { it + 1 }
+            }
+        }
 
     suspend fun endSession(sessionId: String, studentId: String, startedAtMs: Long, endedAtMs: Long) {
         withContext(Dispatchers.IO) {

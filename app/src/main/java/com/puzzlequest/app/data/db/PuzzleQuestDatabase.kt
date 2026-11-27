@@ -2,7 +2,13 @@ package com.puzzlequest.app.data.db
 
 import android.content.ContentValues
 import android.content.Context
+import android.database.DatabaseUtils
 import android.database.sqlite.SQLiteDatabase
+import androidx.core.database.sqlite.transaction
+import com.puzzlequest.app.data.history.HistoryImportResult
+import com.puzzlequest.app.data.history.PracticeHistory
+import com.puzzlequest.app.engine.Grading
+import java.time.Instant
 import android.database.sqlite.SQLiteOpenHelper
 import java.util.UUID
 
@@ -208,24 +214,75 @@ class PuzzleQuestDatabase(context: Context) :
 
     fun insertAttempt(attempt: AttemptEntity, sessionStartedAtMs: Long) {
         upsertSession(attempt.sessionId, attempt.studentId, sessionStartedAtMs)
-        val cv = ContentValues().apply {
-            put("id", attempt.id)
-            put("student_id", attempt.studentId)
-            put("session_id", attempt.sessionId)
-            put("question_id", attempt.questionId)
-            put("response_json", attempt.responseJson)
-            put("is_correct", if (attempt.isCorrect) 1 else 0)
-            put("confidence", attempt.confidence)
-            if (attempt.firstActionMs != null) put("first_action_ms", attempt.firstActionMs)
-            put("total_ms", attempt.totalMs)
-            put("listen_count", attempt.listenCount)
-            put("answered_at_ms", attempt.answeredAtMs)
-            put("local_date", attempt.localDate)
-            put("selection_reason", attempt.selectionReason)
-            put("scratchpad", attempt.scratchpad)
-            if (attempt.scratchpadStrokes != null) put("scratchpad_strokes", attempt.scratchpadStrokes)
+        check(writableDatabase.replaceOrThrow("attempts", null, attemptValues(attempt)) != -1L)
+    }
+
+    private fun attemptValues(attempt: AttemptEntity) = ContentValues().apply {
+        put("id", attempt.id)
+        put("student_id", attempt.studentId)
+        put("session_id", attempt.sessionId)
+        put("question_id", attempt.questionId)
+        put("response_json", attempt.responseJson)
+        put("is_correct", if (attempt.isCorrect) 1 else 0)
+        put("confidence", attempt.confidence)
+        if (attempt.firstActionMs != null) put("first_action_ms", attempt.firstActionMs)
+        put("total_ms", attempt.totalMs)
+        put("listen_count", attempt.listenCount)
+        put("answered_at_ms", attempt.answeredAtMs)
+        put("local_date", attempt.localDate)
+        put("selection_reason", attempt.selectionReason)
+        put("scratchpad", attempt.scratchpad)
+        if (attempt.scratchpadStrokes != null) put("scratchpad_strokes", attempt.scratchpadStrokes)
+    }
+
+    fun importPracticeHistory(studentId: String, history: PracticeHistory): HistoryImportResult {
+        val db = writableDatabase
+        val prefix = "web:$studentId:${history.learner.id}:"
+        var added = 0
+        db.transaction {
+            for (session in history.sessions) {
+                val sessionId = prefix + session.id
+                val startedAt = Instant.parse(session.startedAt).toEpochMilli()
+                // Preserve the recorded end if an older export is imported again.
+                upsertSession(sessionId, studentId, startedAt)
+                session.endedAt?.let { ended ->
+                    val endMs = Instant.parse(ended).toEpochMilli()
+                    val values = ContentValues().apply { put("ended_at_ms", endMs) }
+                    db.update(
+                        "practice_sessions", values,
+                        "id = ? AND (ended_at_ms IS NULL OR ended_at_ms < ?)",
+                        arrayOf(sessionId, endMs.toString()),
+                    )
+                }
+                for (row in session.attempts) {
+                    val attemptId = prefix + row.id
+                    val exists = DatabaseUtils.longForQuery(
+                        db, "SELECT EXISTS(SELECT 1 FROM attempts WHERE id = ?)", arrayOf(attemptId),
+                    ) == 1L
+                    if (exists) continue
+                    val attempt = AttemptEntity(
+                        id = attemptId,
+                        studentId = studentId,
+                        sessionId = sessionId,
+                        questionId = row.questionId,
+                        responseJson = Grading.encodeResponse(row.response),
+                        isCorrect = row.isCorrect,
+                        confidence = row.confidence,
+                        firstActionMs = row.firstActionMs,
+                        totalMs = row.totalMs,
+                        listenCount = row.listenCount,
+                        answeredAtMs = Instant.parse(row.answeredAt).toEpochMilli(),
+                        localDate = row.practiceDate(),
+                        selectionReason = row.selectionReason,
+                        scratchpad = row.scratchpad,
+                        scratchpadStrokes = row.scratchpadStrokes,
+                    )
+                    check(db.insertOrThrow("attempts", null, attemptValues(attempt)) != -1L)
+                    added++
+                }
+            }
         }
-        check(writableDatabase.replaceOrThrow("attempts", null, cv) != -1L)
+        return HistoryImportResult(added, history.answerCount - added)
     }
 
     fun getAttemptsForStudent(studentId: String): List<AttemptEntity> {
