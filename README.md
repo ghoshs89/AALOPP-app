@@ -28,3 +28,14 @@ Practice works offline. The update check contacts GitHub for release metadata an
 2. GitHub Actions builds with JDK 21, Gradle 9.3.1, SDK 36 and Build Tools 36.0.0. To publish from a tag automatically, configure repository secrets `PUZZLE_KEYSTORE_BASE64` (the original publisher PKCS12 file, base64 encoded) and `PUZZLE_KEY_PASSWORD`. The signing alias is `puzzlequest`. Keep a private offline backup of both files.
 3. For local signing, export `PUZZLE_KEYSTORE` as the absolute keystore path and `PUZZLE_KEY_PASSWORD` from private storage. Run `gradle :app:assembleRelease`. With `ANDROID_HOME` set, run `scripts/verify-release.sh app/build/outputs/apk/release/app-release.apk vX.Y.Z`, substituting the tag. Publish the verified file as `PuzzleQuest-vX.Y.Z.apk` on a stable GitHub Release for that tag. The updater uses the SHA-256 digest supplied by GitHub.
 4. Workflows without signing secrets produce a build artifact for offline signing. Only APKs that pass the pinned certificate and version checks are eligible for publication. Never regenerate the publisher key for an update.
+
+For an offline-signed APK, the **Release APK** workflow can also publish from the repository’s Git blob store. After the tag exists and the APK passes the local verifier, run the following from the repository. This transfers only the signed APK.
+
+```sh
+tag="v$(cat version.txt)"
+apk=app/build/outputs/apk/release/app-release.apk
+scripts/verify-release.sh "$apk" "$tag"
+blob=$(base64 < "$apk" | jq -Rs '{encoding:"base64", content:.}' |
+  gh api "repos/ghoshs89/AALOPP-app/git/blobs" --input - --jq .sha)
+gh workflow run release-apk.yml --ref main -f signed_blob="$blob" -f release_tag="$tag"
+```
